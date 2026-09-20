@@ -1,5 +1,5 @@
 import { Popup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
-import { createVideoAttachment, getTurnVideo, appendVideoMarker } from './media.js';
+import { createVideoAttachment, getTurnVideo, appendVideoMarker, isAllowedVideoModel } from './media.js';
 import { uploadResumable, fileFingerprint } from './upload.js';
 import { createSettingsPanel } from './settings.js';
 
@@ -7,6 +7,7 @@ const API = '/api/plugins/gcs-video';
 let config;
 let pending = null;
 const context = () => globalThis.Luker.getContext();
+const durationLabel = value => value > 0 ? `${Math.round(value)} 秒` : '时长未知';
 
 async function showVideoManager() {
     config = await (await fetch(`${API}/config`, { headers: context().getRequestHeaders() })).json();
@@ -131,7 +132,7 @@ async function showVideoManager() {
         try {
             let saved = loadSaved();
             if (saved?.fingerprint !== fileFingerprint(selectedFile)) {
-                const response = await fetch(`${API}/uploads`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({ filename: selectedFile.name, size: selectedFile.size, duration_seconds: Number(duration.val()) }), signal: controller.signal });
+                const response = await fetch(`${API}/uploads`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({ filename: selectedFile.name, size: selectedFile.size, duration_seconds: duration.val() ? Number(duration.val()) : null }), signal: controller.signal });
                 saved = await response.json();
                 if (!response.ok) throw new Error(saved.error || '创建上传失败。');
                 saved.fingerprint = fileFingerprint(selectedFile);
@@ -244,7 +245,7 @@ function renderPending() {
     $('#gcs-video-pending').remove();
     if (!pending) return;
     $('<div id="gcs-video-pending" class="gcs-video-badge">').append(
-        $('<span>').text(`${pending.title} · ${pending.duration_seconds} 秒 · 仅本轮`),
+        $('<span>').text(`${pending.title} · ${durationLabel(pending.duration_seconds)} · 仅本轮`),
         $('<button type="button" class="menu_button">').text('取消附件').on('click', () => { pending = null; renderPending(); }),
     ).insertBefore('#nonQRFormItems');
 }
@@ -261,17 +262,52 @@ function queueVideo(url, duration, title) {
 }
 
 async function showAttachDialog() {
-    const form = $('<div class="gcs-video-dialog">').append(
-        $('<h3>').text('添加视频链接（仅本轮）'),
-        $('<p>').text(`沿用 已配置的 Gemini 连接，选择 ${config.model} 模型。附加后在输入框中填写问题并发送。`),
-        $('<label>').text('GCS 地址或 HTTPS 视频直链').append($('<input class="text_pole" name="uri">').attr('placeholder', `gs://${config.bucket}/videos/video.mp4`).val(pending?.url ?? '')),
-        $('<label>').text('时长（秒，用于估算上下文占用）').append($('<input class="text_pole" name="duration" type="number" min="0.1" step="any">').val(pending?.duration_seconds ?? '')),
-        $('<p>').text('后续用户消息不再发送此视频；重新生成本轮回答会再次发送。文件删除后可继续基于已有文字回答聊天，需要重看时重新上传并附加。'),
-    );
-    while (await new Popup(form, POPUP_TYPE.CONFIRM, '', { okButton: '附加', cancelButton: '取消' }).show() === POPUP_RESULT.AFFIRMATIVE) {
-        try { queueVideo(form.find('[name=uri]').val(), form.find('[name=duration]').val()); return; }
-        catch (error) { toastr.error(error.message); }
+    const uri = $('<input class="text_pole" name="uri" placeholder="gs://… 或 https://…">').val(pending?.url ?? '');
+    const duration = $('<input class="text_pole" name="duration" type="number" min="0.1" step="any" placeholder="自动读取，未知可留空">').val(pending?.duration_seconds ?? '');
+    const hint = $('<p role="status">').text('时长仅用于估算上下文，不是 Gemini 读取视频的必填参数。');
+    let lookup;
+    let timer;
+    async function detectDuration() {
+        lookup?.abort(); lookup = new AbortController(); const signal = lookup.signal;
+        const value = String(uri.val()).trim(); if (!value) return;
+        hint.text('正在读取视频时长…');
+        try {
+            const response = await fetch(`${API}/metadata`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({url:value}), signal });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '未能读取时长。');
+            let seconds = data.duration_seconds;
+            if (!(seconds > 0) && value.startsWith('https://')) {
+                seconds = await new Promise(resolve => {
+                    const video = document.createElement('video'); let done = false;
+                    const finish = result => { if (done) return; done = true; clearTimeout(timeout); signal.removeEventListener('abort', abort); video.removeAttribute('src'); video.load(); resolve(result); };
+                    const abort = () => finish(null);
+                    const timeout = setTimeout(() => finish(null), 12000);
+                    signal.addEventListener('abort', abort, {once:true});
+                    video.preload = 'metadata'; video.onloadedmetadata = () => finish(Number.isFinite(video.duration) ? video.duration : null); video.onerror = () => finish(null);
+                    if (signal.aborted) return finish(null); video.src = value;
+                });
+            }
+            if (signal.aborted || String(uri.val()).trim() !== value) return;
+            if (seconds > 0) { if (!duration.val()) duration.val(Math.round(seconds * 10) / 10); hint.text('已读取时长，可按需修正。'); }
+            else hint.text('未获取到时长，仍可留空附加；届时不提前估算视频上下文。');
+        } catch (error) { if (!signal.aborted) hint.text(error.message + ' 时长可留空。'); }
     }
+    uri.on('input', () => { duration.val(''); lookup?.abort(); clearTimeout(timer); timer = setTimeout(detectDuration, 500); });
+    const detect = $('<button type="button" class="menu_button">').text('重新读取时长').on('click', detectDuration);
+    const form = $('<div class="gcs-video-dialog">').append(
+        $('<h3>').text('添加视频链接'),
+        $('<p>').text('附加到本轮后，使用支持视频的 Gemini 连接发送。连接与可用模型可在视频库设置中调整。'),
+        $('<label>').text('GCS 地址或 HTTPS 视频直链').append(uri),
+        $('<label>').text('视频时长（秒，可选）').append(duration), detect, hint,
+        $('<p>').text('下一轮不会自动重发视频，需要时可再次附加。'),
+    );
+    if (uri.val() && !duration.val()) detectDuration();
+    try {
+        while (await new Popup(form, POPUP_TYPE.CONFIRM, '', { okButton: '附加', cancelButton: '取消' }).show() === POPUP_RESULT.AFFIRMATIVE) {
+            try { queueVideo(uri.val(), duration.val(), undefined); return; }
+            catch (error) { toastr.error(error.message); }
+        }
+    } finally { lookup?.abort(); clearTimeout(timer); }
 }
 
 function renderMessage(index) {
@@ -281,7 +317,7 @@ function renderMessage(index) {
     message.find('.gcs-video-message').remove();
     if (!video) return;
     $('<div class="gcs-video-message gcs-video-badge">').append(
-        $('<span>').text(`${video.title} · ${video.duration_seconds} 秒 · 视频仅本轮`),
+        $('<span>').text(`${video.title} · ${durationLabel(video.duration_seconds)} · 视频仅本轮`),
         $('<button type="button" class="menu_button">').text('再次附加').on('click', () => {
             try { queueVideo(video.url, video.duration_seconds, video.title); }
             catch (error) { toastr.error(error.message); }
@@ -311,8 +347,8 @@ async function prepareRequest(data) {
     if (!video) return;
     try {
         const upstream = String(data.reverse_proxy || data.base_url || '').replace(/\/$/, '');
-        if (data.chat_completion_source !== 'makersuite' || data.model !== config.model || upstream !== config.upstream) {
-            throw new Error(`本轮含 GCS 视频，请选择 已配置的 Gemini 连接和 ${config.model} 模型。`);
+        if (data.chat_completion_source !== 'makersuite' || !isAllowedVideoModel(config.models, data.model) || upstream !== config.upstream) {
+            throw new Error('本轮含视频，请使用设置中允许的 Gemini 连接与模型。');
         }
         const response = await fetch(`${API}/prepare`, {
             method: 'POST', headers: ctx.getRequestHeaders(),
@@ -359,7 +395,7 @@ jQuery(async () => {
         });
         ctx.eventSource.on(ctx.eventTypes.GENERATION_CONTEXT_READY, payload => {
             const video = getTurnVideo(context().chat);
-            if (!video || !Number.isFinite(payload.maxContext)) return;
+            if (!video || !(video.duration_seconds > 0) || !Number.isFinite(payload.maxContext)) return;
             const reserve = Math.ceil(video.duration_seconds * 300);
             if (payload.maxContext - reserve < 1024) {
                 if (!payload.dryRun) { context().stopGeneration(); toastr.error('视频估算占用超过当前上下文预算，请调整上下文长度或缩短视频。'); }

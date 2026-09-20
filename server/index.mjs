@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { validateVideo, createRelay } from './relay.mjs';
 import { createStorage } from './storage.mjs';
 import { createImportWorkers } from './workers.mjs';
-import { loadConfig, visibleSettings, prepareSettings, commitSettings, isAdmin } from './settings.mjs';
+import { loadConfig, visibleSettings, prepareSettings, commitSettings, isAdmin, allowsModel } from './settings.mjs';
 
 export const info = { id: 'gcs-video', name: 'Video Toolkit', description: 'Turn-scoped private GCS video attachments using the existing native Gemini connection.' };
 const configFile = path.resolve(process.cwd(), 'config/gcs-video/config.json');
@@ -61,7 +61,7 @@ export function init(router) {
     router.get('/config', async (request, response) => {
         try {
             await ready;
-            response.json({ configured: Boolean(storage), admin: isAdmin(request), model: config.model, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker });
+            response.json({ configured: Boolean(storage), admin: isAdmin(request), models: config.models, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker });
         } catch { response.status(503).json({ error: 'GCS video plugin is unavailable.' }); }
     });
     router.get('/settings', (request, response) => {
@@ -115,6 +115,17 @@ export function init(router) {
             response.set('Cache-Control', 'no-store').json(result);
         } catch (error) { response.status(502).json({ error: '无法读取视频列表，请检查 GCS 连接。' }); }
     });
+    router.post('/metadata', async (request, response) => {
+        if (!request.user?.profile?.handle) return response.sendStatus(401);
+        try {
+            await ready;
+            const video = validateVideo({ url: request.body?.url }, config);
+            const handle = request.user.profile.handle;
+            const data = video.url.startsWith('gs://') ? await storage.metadata(video.url, handle)
+                : { duration_seconds: readDirectVideos(handle).find(item => item.url === video.url)?.duration_seconds || null };
+            response.set('Cache-Control', 'no-store').json(data);
+        } catch { response.status(400).json({ error: '无法读取时长，可留空后继续附加。' }); }
+    });
     router.post('/uploads', async (request, response) => {
         try {
             await ready;
@@ -151,14 +162,14 @@ export function init(router) {
             await ready;
             if (!request.user?.profile?.handle || !request.user?.directories) return response.sendStatus(401);
             const body = request.body || {};
-            if (body.model !== config.model || body.chat_completion_source !== 'makersuite'
+            if (!allowsModel(config, body.model) || body.chat_completion_source !== 'makersuite'
                 || String(body.upstream || '').replace(/\/$/, '') !== config.upstream) {
-                return response.status(400).json({ error: `请选择已配置的 Gemini 连接及 ${config.model} 模型。` });
+                return response.status(400).json({ error: '请使用已配置的 Gemini 连接及允许的模型。' });
             }
             const apiKey = typeof body.proxy_password === 'string' && body.proxy_password
                 ? body.proxy_password
                 : secretModule.readProviderSecret(request, secretModule.SECRET_KEYS.MAKERSUITE);
-            response.set('Cache-Control', 'no-store').json(relay.prepare(body.video, apiKey, request.user.profile.handle));
+            response.set('Cache-Control', 'no-store').json(relay.prepare(body.video, apiKey, request.user.profile.handle, body.model));
         } catch (error) {
             response.status(400).json({ error: '无法准备 GCS 视频请求，请检查附件、Gemini 连接和插件状态。' });
         }
@@ -166,7 +177,7 @@ export function init(router) {
     ready = (async () => {
         ({ default: fetchImpl } = await import('node-fetch'));
         secretModule = await import(pathToFileURL(path.join(process.cwd(), 'src/endpoints/secrets.js')).href);
-        if (config.credential_file && config.bucket && config.model && config.upstream) {
+        if (config.credential_file && config.bucket && config.upstream) {
             try { storage = createStorage(config, fetchImpl); } catch { console.warn('[Video Toolkit] Configure storage in the administrator settings.'); }
         }
         for (const item of config.import_workers) { try { importTokens.set(item.id, fs.readFileSync(item.token_file, 'utf8').trim()); } catch {} }

@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { createVideoAttachment } from '../media.js';
+import { allowsModel } from './settings.mjs';
 
 export function validateVideo(video, config) {
     const normalized = createVideoAttachment(video?.url, video?.duration_seconds);
@@ -59,7 +60,7 @@ export function createRelay(config, fetchImpl) {
             const match = url.pathname.match(/^\/relay\/([a-f0-9]{48})\/(v1beta|v1)\/models\/([^/:]+):(generateContent|streamGenerateContent)$/);
             const job = match && jobs.get(match[1]);
             if (request.method !== 'POST' || !job || job.expires <= Date.now()
-                || !equalSecret(url.searchParams.get('key'), job.nonce) || match[3] !== config.model) {
+                || !equalSecret(url.searchParams.get('key'), job.nonce) || match[3] !== job.model) {
                 response.writeHead(403, { 'Content-Type': 'application/json' });
                 response.end(JSON.stringify({ error: { message: 'Invalid or expired GCS video request. Reattach and retry.' } }));
                 return;
@@ -78,7 +79,7 @@ export function createRelay(config, fetchImpl) {
             const timeout = setTimeout(() => controller.abort(), config.request_timeout_ms);
             timeout.unref();
             response.once('close', () => { clearTimeout(timeout); controller.abort(); });
-            const target = new URL(`${config.upstream}/${match[2]}/models/${config.model}:${match[4]}`);
+            const target = new URL(`${job.upstream}/${match[2]}/models/${job.model}:${match[4]}`);
             if (match[4] === 'streamGenerateContent') target.searchParams.set('alt', 'sse');
             const upstream = await fetchImpl(target.href, {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': job.apiKey },
@@ -101,13 +102,14 @@ export function createRelay(config, fetchImpl) {
     });
     return {
         server,
-        prepare(video, apiKey, user) {
+        prepare(video, apiKey, user, model = config.models[0]) {
             clean();
+            if (!allowsModel(config, model)) throw new Error('当前模型不在允许列表中。');
             if (!apiKey) throw new Error('现有 CPA 连接没有可用密钥。');
             if (jobs.size >= 128 || [...jobs.values()].filter(job => job.user === user).length >= 16) throw new Error('待发送的视频请求过多，请稍后重试。');
             const nonce = randomBytes(24).toString('hex');
             const marker = `[LUKER_GCS_VIDEO_${nonce}]`;
-            jobs.set(nonce, { nonce, marker, apiKey, user, video: validateVideo(video, config), expires: Date.now() + config.prepare_ttl_ms });
+            jobs.set(nonce, { nonce, marker, apiKey, user, model, upstream: config.upstream, video: validateVideo(video, config), expires: Date.now() + config.prepare_ttl_ms });
             return { marker, reverse_proxy: `http://127.0.0.1:${server.address().port}/relay/${nonce}`, proxy_password: nonce };
         },
         async close() {

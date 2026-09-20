@@ -1,6 +1,6 @@
 {
   "name": "luker-video-toolkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Turn-scoped HTTPS and GCS video attachments with configurable remote import workers for Luker.",
   "type": "module",
   "main": "server/index.mjs",

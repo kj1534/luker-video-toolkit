@@ -11,7 +11,7 @@ function fixture(t) {
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
     return { directory, file: path.join(directory, 'config.json'), input: {
-        upstream: 'https://gateway.example', model: 'gemini-video', bucket: 'private-video-test',
+        upstream: 'https://gateway.example', models: ['gemini-video'], bucket: 'private-video-test',
         max_upload_bytes: 2147483648, https_max_bytes: 14000000, direct_media_origins: ['https://media.example'],
         default_import_worker: 'primary', import_workers: [{ id: 'primary', label: 'Primary', url: 'https://worker.example/import', token: 'a-test-only-token-at-least-24-characters' }],
         credential_json: { type: 'service_account', project_id: 'example-project', client_email: 'test@example-project.iam.gserviceaccount.com', private_key: privateKey },
@@ -35,7 +35,7 @@ test('settings persist restricted secrets but never return them or filesystem pa
     assert.equal(serialized.includes(input.import_workers[0].token), false);
     assert.equal(serialized.includes('PRIVATE KEY'), false);
     assert.equal(serialized.includes(directory), false);
-    const updated = prepareSettings({...visible, model:'new-model'}, saved, directory);
+    const updated = prepareSettings({...visible, models:['new-model']}, saved, directory);
     assert.equal(updated.writes.length, 0);
     assert.equal(updated.config.credential_file, saved.credential_file);
     assert.equal(updated.config.import_workers[0].token_file, saved.import_workers[0].token_file);
@@ -53,4 +53,15 @@ test('local-upload-only setup needs no remote node', t => {
     const {directory,input} = fixture(t);
     const result = prepareSettings({...input,import_workers:[],default_import_worker:''},defaults,directory);
     assert.equal(result.config.import_workers.length,0);
+});
+
+test('existing single-model configuration migrates without losing its restriction', t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'video-migration-'));
+    t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+    const file=path.join(directory,'config.json');
+    fs.writeFileSync(file,JSON.stringify({model:'existing-model',bucket:'existing-bucket'}));
+    const config=loadConfig(file);
+    assert.deepEqual(config.models,['existing-model']);
+    assert.equal('model' in config,false);
+    assert.equal(config.bucket,'existing-bucket');
 });

@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { createRelay, injectVideo, validateVideo } from '../server/relay.mjs';
 import { createVideoAttachment, getTurnVideo, appendVideoMarker } from '../media.js';
 
-const config = { model: 'example-video-model', bucket: 'test-video-bucket', prepare_ttl_ms: 120000, request_timeout_ms: 3000 };
+const config = { models: ['example-video-model'], bucket: 'test-video-bucket', prepare_ttl_ms: 120000, request_timeout_ms: 3000 };
 const video = createVideoAttachment('gs://test-video-bucket/clip.mp4', 20);
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 
@@ -34,7 +34,7 @@ test('video marker survives the unmodified Luker Gemini converter', { skip: !exi
     const original = [{ role: 'user', content: 'Describe it' }];
     const messages = appendVideoMarker(original, '[test-marker]');
     assert.deepEqual(original, [{ role: 'user', content: 'Describe it' }]);
-    const converted = convertGooglePrompt(messages, config.model, true, { charName: '', userName: '', startsWithGroupName: () => false });
+    const converted = convertGooglePrompt(messages, config.models[0], true, { charName: '', userName: '', startsWithGroupName: () => false });
     const body = { contents: converted.contents, generationConfig: { thinkingConfig: { thinkingLevel: 'low' } }, tools: [{ googleSearch: {} }] };
     const result = injectVideo(body, '[test-marker]', video);
     assert.deepEqual(result.contents[0].parts[1], { fileData: { mimeType: 'video/mp4', fileUri: video.url } });
@@ -85,9 +85,9 @@ test('private relay preserves native payload, streaming and errors; rejects repl
         for (const action of ['generateContent', 'streamGenerateContent']) {
             const job = relay.prepare(video, 'test-secret', 'user-a');
             assert.equal(JSON.stringify(job).includes('test-secret'), false);
-            const url = `${job.reverse_proxy}/v1beta/models/${config.model}:${action}?key=${job.proxy_password}`;
+            const url = `${job.reverse_proxy}/v1beta/models/${config.models[0]}:${action}?key=${job.proxy_password}`;
             const body = { contents: [{ role: 'user', parts: [{ text: job.marker }] }], systemInstruction: { parts: [{ text: 'Keep this' }] } };
-            const wrongModel = await fetch(url.replace(config.model, 'ordinary-model'), { method: 'POST', body: JSON.stringify(body) });
+            const wrongModel = await fetch(url.replace(config.models[0], 'ordinary-model'), { method: 'POST', body: JSON.stringify(body) });
             assert.equal(wrongModel.status, 403);
             const result = await fetch(url, { method: 'POST', body: JSON.stringify(body) });
             assert.equal(result.status, action === 'generateContent' ? 404 : 200);
@@ -111,4 +111,29 @@ test('HTTPS references preserve signed queries and reject unconfigured origins o
     assert.throws(() => createVideoAttachment('https://user:pass@media.example/clip.mp4', 4));
     const body = injectVideo({ contents: [{ role: 'user', parts: [{ text: 'marker' }] }] }, 'marker', direct);
     assert.equal(body.contents[0].parts[0].fileData.fileUri, direct.url);
+});
+
+test('duration may be unknown; every prepared request pins its selected model and upstream', async () => {
+    const unknown = createVideoAttachment('gs://test-video-bucket/unknown.mp4');
+    assert.equal(unknown.duration_seconds, null);
+    assert.equal(createVideoAttachment(unknown.url, '').duration_seconds, null);
+    assert.throws(() => createVideoAttachment(unknown.url, -2));
+    const received = [];
+    const upstream = http.createServer(async (request, response) => {
+        for await (const chunk of request) { /* Drain the body. */ }
+        received.push(request.url); response.end('{}');
+    });
+    await listen(upstream);
+    const settings = { ...config, models: ['first', 'second'], upstream: `http://127.0.0.1:${upstream.address().port}` };
+    const relay = createRelay(settings, fetch); await listen(relay.server);
+    try {
+        assert.throws(() => relay.prepare(unknown, 'key', 'user', 'third'));
+        const job = relay.prepare(unknown, 'key', 'user', 'second');
+        settings.upstream = 'http://127.0.0.1:1';
+        const url = `${job.reverse_proxy}/v1beta/models/second:generateContent?key=${job.proxy_password}`;
+        const body = JSON.stringify({ contents:[{role:'user',parts:[{text:job.marker}]}] });
+        assert.equal((await fetch(url.replace('/second:', '/first:'), {method:'POST',body})).status,403);
+        assert.equal((await fetch(url,{method:'POST',body})).status,200);
+        assert.deepEqual(received,['/v1beta/models/second:generateContent']);
+    } finally { await relay.close(); upstream.closeAllConnections(); await new Promise(resolve=>upstream.close(resolve)); }
 });

@@ -1,12 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createPrivateKey, randomUUID } from 'node:crypto';
+import { isAllowedVideoModel } from '../media.js';
 
-export const defaults = { upstream: '', model: '', bucket: '', port: 18779, prepare_ttl_ms: 120000, request_timeout_ms: 300000, max_upload_bytes: 2147483648, https_max_bytes: 14000000, direct_media_origins: [], default_import_worker: '', import_workers: [] };
+export const defaults = { upstream: '', models: [], bucket: '', port: 18779, prepare_ttl_ms: 120000, request_timeout_ms: 300000, max_upload_bytes: 2147483648, https_max_bytes: 14000000, direct_media_origins: [], default_import_worker: '', import_workers: [] };
 export function isAdmin(request) { return request.user?.profile?.admin === true; }
-export function loadConfig(file) { return fs.existsSync(file) ? { ...defaults, ...JSON.parse(fs.readFileSync(file, 'utf8')) } : structuredClone(defaults); }
+export function loadConfig(file) {
+    if (!fs.existsSync(file)) return structuredClone(defaults);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // Existing installations stored one model. Migrate it into the editable list.
+    if (!Array.isArray(saved.models)) saved.models = saved.model ? [saved.model] : [];
+    delete saved.model;
+    return { ...defaults, ...saved };
+}
+export function allowsModel(config, model) {
+    return isAllowedVideoModel(config.models, model);
+}
 export function visibleSettings(config) {
-    return { upstream: config.upstream, model: config.model, bucket: config.bucket,
+    return { upstream: config.upstream, models: config.models, bucket: config.bucket,
         max_upload_bytes: config.max_upload_bytes, https_max_bytes: config.https_max_bytes,
         direct_media_origins: config.direct_media_origins, default_import_worker: config.default_import_worker,
         credential_configured: Boolean(config.credential_file && fs.existsSync(config.credential_file)),
@@ -25,8 +36,8 @@ export function prepareSettings(input, previous, directory) {
     const writes = [];
     const config = { ...previous };
     config.upstream = https(input.upstream, '模型接口');
-    config.model = String(input.model || '').trim();
-    if (!/^[a-zA-Z0-9._-]{1,180}$/.test(config.model)) throw new Error('请输入有效模型 ID。');
+    if (!Array.isArray(input.models) || input.models.length > 50 || input.models.some(model => typeof model !== 'string' || !/^[a-zA-Z0-9._-]{1,180}$/.test(model))) throw new Error('模型列表无效，请每行填写一个模型 ID。');
+    config.models = [...new Set(input.models)];
     config.bucket = String(input.bucket || '').trim();
     if (!/^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/.test(config.bucket)) throw new Error('请输入 GCS 桶名称，不含 gs://。');
     config.max_upload_bytes = integer(input.max_upload_bytes, 1, 2147483648, '上传大小');

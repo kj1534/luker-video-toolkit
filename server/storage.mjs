@@ -13,7 +13,7 @@ export function uploadMetadata(input, handle, config) {
     if (!filename || !Number.isSafeInteger(size) || size <= 0 || size > config.max_upload_bytes) throw new Error('文件大小无效或超过 2 GiB 上传上限。');
     const name = `${userPrefix(handle)}${new Date().toISOString().slice(0, 10)}/${randomUUID()}-${filename}`;
     const video = createVideoAttachment(`gs://${config.bucket}/${name}`, input.duration_seconds);
-    return { size, video, object: { name, contentType: video.mime_type, metadata: { original_name: filename, duration_seconds: String(video.duration_seconds) } } };
+    return { size, video, object: { name, contentType: video.mime_type, metadata: { original_name: filename, ...(video.duration_seconds ? { duration_seconds: String(video.duration_seconds) } : {}) } } };
 }
 
 export function createStorage(config, fetchImpl) {
@@ -54,6 +54,18 @@ export function createStorage(config, fetchImpl) {
             const parsed = new URL(session);
             if (parsed.protocol !== 'https:' || parsed.hostname !== 'storage.googleapis.com') throw new Error('Invalid upload session');
             return { session, video: data.video, size: data.size };
+        },
+        async metadata(uri, handle) {
+            const prefix = `gs://${config.bucket}/`;
+            if (!uri.startsWith(prefix)) throw new Error('Wrong bucket');
+            const name = uri.slice(prefix.length);
+            if (!name.startsWith(userPrefix(handle))) return { duration_seconds: null };
+            const url = new URL(`https://storage.googleapis.com/storage/v1/b/${config.bucket}/o/${encodeURIComponent(name)}`);
+            url.searchParams.set('fields', 'metadata,size');
+            const response = await authorized(url.href);
+            if (!response.ok) return { duration_seconds: null };
+            const data = await response.json();
+            return { duration_seconds: Number(data.metadata?.duration_seconds) || null, size: Number(data.size) };
         },
         async list(handle, pageToken = '') {
             const url = new URL(`https://storage.googleapis.com/storage/v1/b/${config.bucket}/o`);

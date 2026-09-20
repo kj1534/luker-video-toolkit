@@ -1,6 +1,6 @@
 {
   "upstream": "https://gemini-gateway.example",
-  "model": "your-vertex-video-model",
+  "models": ["your-vertex-video-model"],
   "bucket": "your-private-video-bucket",
   "port": 18779,
   "prepare_ttl_ms": 120000,

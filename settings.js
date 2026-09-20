@@ -10,7 +10,8 @@ export async function createSettingsPanel(context, onSaved) {
         return { input, label: $('<label class="gcs-field">').append($('<span>').text(title), input) };
     };
     const upstream = field('Gemini 接口地址', current.upstream);
-    const model = field('模型 ID', current.model);
+    const models = $('<textarea class="text_pole" rows="3" placeholder="每行一个模型 ID；留空允许此连接的所有模型">').val(current.models.join('\n'));
+    const modelLabel = $('<label class="gcs-field">').append($('<span>').text('允许的视频模型（可选）'), models);
     const bucket = field('GCS 桶名称', current.bucket);
     const maxSize = field('单文件上限（MiB）', current.max_upload_bytes / 1048576, 'number');
     maxSize.input.attr({ min: 1, max: 2048, step: 1 });
@@ -47,8 +48,8 @@ export async function createSettingsPanel(context, onSaved) {
     const testResult = $('<div class="gcs-check-results" role="status">');
     const fields = $('<fieldset>');
     fields.append(
-        $('<h4>').text('模型连接'), $('<p class="gcs-muted">').text('填写与 Luker 当前 Gemini 连接一致的接口地址和模型 ID。'),
-        $('<div class="gcs-field-grid">').append(upstream.label, model.label),
+        $('<h4>').text('模型连接'), $('<p class="gcs-muted">').text('接口地址需与 Luker Gemini 连接一致。可限制可用模型，或留空使用当前选择的模型；连接身份需有视频读取权限。'),
+        upstream.label, modelLabel,
         $('<h4>').text('视频存储'), bucket.label,
         $('<label class="gcs-field">').append($('<span>').text('服务账号密钥'), credential, credentialState),
         $('<div class="gcs-field-grid">').append(maxSize.label, directSize.label),
@@ -63,7 +64,7 @@ export async function createSettingsPanel(context, onSaved) {
         try {
             const keyFile = credential[0].files?.[0];
             if (keyFile?.size > 65536) throw new Error('请选择服务账号 JSON 密钥文件（最大 64 KiB）。');
-            const body = { upstream: upstream.input.val(), model: model.input.val(), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val() })) };
+            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val() })) };
             const result = await fetch(`${API}/settings`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify(body) });
             const data = await result.json();
             if (!result.ok) throw new Error(data.error || '保存失败。');

@@ -26,9 +26,9 @@ export function getVideoMimeType(value) {
 export function createVideoAttachment(value, duration) {
     const url = String(value ?? '').trim();
     const mimeType = getVideoMimeType(url);
-    const durationSeconds = Number(duration);
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-        throw new Error('请填写大于 0 的视频时长（秒），用于估算上下文占用。');
+    const durationSeconds = duration == null || duration === '' ? null : Number(duration);
+    if (durationSeconds !== null && (!Number.isFinite(durationSeconds) || durationSeconds <= 0)) {
+        throw new Error('视频时长需大于 0；未知时可留空。');
     }
     return {
         url, type: 'video', title: url.startsWith('https://') ? decodeURIComponent(new URL(url).pathname.split('/').pop()) : url.slice(url.lastIndexOf('/') + 1),
@@ -50,4 +50,9 @@ export function appendVideoMarker(messages, marker) {
     const content = Array.isArray(message.content) ? message.content : [{ type: 'text', text: String(message.content ?? '') }];
     message.content = [...content, { type: 'text', text: marker }];
     return copy;
+}
+
+/** An empty administrator list allows the currently selected Gemini model. */
+export function isAllowedVideoModel(models, model) {
+    return typeof model === 'string' && /^[a-zA-Z0-9._-]{1,180}$/.test(model) && (!models.length || models.includes(model));
 }
