@@ -9,7 +9,7 @@ version = (root / 'VERSION').read_text().strip()
 destination = root / 'dist'
 destination.mkdir(exist_ok=True)
 asset = destination / f'video-toolkit-node-{version}.tar.gz'
-paths = ['VERSION', 'LICENSE', 'README.md', 'node', 'scripts/install-node.py', 'docs/node-nginx.example.conf']
+paths = ['VERSION', 'LICENSE', 'README.md', 'node', 'scripts/install-node.py', 'docs/node-nginx.example.conf', 'docs/installation.md']
 def metadata(item):
     item.uid = item.gid = 0
     item.uname = item.gname = ''

@@ -36,3 +36,5 @@
 
 若不需要 copyparty，设 `small_video.enabled: false`，所有链接导入结果都进 GCS。`small_video.max_bytes` 与 Luker 的 `https_max_bytes` 应一致。copyparty 的实际清理周期需与 `retention_seconds` 匹配，后者用于视频库到期显示。
 
+
+节点上传使用固定大小的分片；v0.1.1 修复 GCS 分片确认响应延迟释放内存的问题。低内存节点应设置合适的 systemd 内存限额，并为其他服务留出余量。

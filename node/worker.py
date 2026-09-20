@@ -52,7 +52,9 @@ def request_upload(session, data, content_range):
     except urllib.error.HTTPError as error:
         if error.code != 308:
             raise
-        response = error
+        # 308 is a normal resumable-upload acknowledgement. Its traceback
+        # otherwise retains this frame and the chunk until cyclic GC runs.
+        response = error.with_traceback(None)
     with response:
         status = response.status
         offset = int(response.headers.get('Range', 'bytes=0--1').rsplit('-', 1)[-1]) + 1 if response.headers.get('Range') else 0
