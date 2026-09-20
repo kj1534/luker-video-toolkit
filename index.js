@@ -1,6 +1,7 @@
 import { Popup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
 import { createVideoAttachment, getTurnVideo, appendVideoMarker } from './media.js';
 import { uploadResumable, fileFingerprint } from './upload.js';
+import { createSettingsPanel } from './settings.js';
 
 const API = '/api/plugins/gcs-video';
 let config;
@@ -8,21 +9,22 @@ let pending = null;
 const context = () => globalThis.Luker.getContext();
 
 async function showVideoManager() {
+    config = await (await fetch(`${API}/config`, { headers: context().getRequestHeaders() })).json();
     const storeKey = `gcs-video-upload:${config.user}`;
     const panel = $('<div class="gcs-video-manager">');
-    const fileInput = $('<input type="file" accept="video/*">');
+    const fileInput = $('<input type="file" accept="video/*" class="gcs-file-input">');
     const duration = $('<input type="number" class="text_pole" min="0.1" step="any" placeholder="视频时长（秒）">');
-    const progress = $('<progress max="100" value="0">');
-    const status = $('<div role="status">').text('选择视频直接上传到 GCS；中断后重新选择相同文件可以续传。');
+    const progress = $('<progress max="100" value="0" aria-label="上传进度">').hide();
+    const status = $('<div role="status" class="gcs-status">').text('选择视频直接上传到 GCS；中断后重新选择相同文件可以续传。');
     const upload = $('<button type="button" class="menu_button">').text('上传 / 继续');
     const pause = $('<button type="button" class="menu_button">').text('暂停').prop('disabled', true);
     const fresh = $('<button type="button" class="menu_button">').text('放弃续传，重新上传');
-    const list = $('<div class="gcs-video-list">');
+    const list = $('<div class="gcs-video-list" aria-label="视频列表">');
     const importUrl = $('<input class="text_pole" placeholder="粘贴视频直链、Iwara 或 B站播放页链接">');
     const importWorker = $('<select class="text_pole" aria-label="导入节点">');
     for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label));
     importWorker.val(config.default_import_worker);
-    const importButton = $('<button type="button" class="menu_button">').text('云端导入');
+    const importButton = $('<button type="button" class="menu_button">').text('开始导入');
     const importStatus = $('<div role="status" class="gcs-import-status">');
     let polling = true;
     const more = $('<button type="button" class="menu_button">').text('加载更多').hide();
@@ -32,31 +34,73 @@ async function showVideoManager() {
     let selectedFile;
     function loadSaved() { try { return JSON.parse(sessionStorage.getItem(storeKey)); } catch { return null; } }
     if (loadSaved()) status.text('有未完成的上传：重新选择相同文件，然后点击“上传 / 继续”。');
-    async function refresh(append = false) {
-        const response = await fetch(`${API}/videos${append && nextPage ? `?pageToken=${encodeURIComponent(nextPage)}` : ''}`, { headers: context().getRequestHeaders() });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || '读取列表失败。');
-        if (!append) list.empty();
-        if (!append && !data.items.length) list.append($('<p>').text('还没有通过此账号上传的视频。也可以直接附加已有 gs:// 地址。'));
-        for (const video of data.items) {
-            $('<div class="gcs-video-list-item">').append(
-                $('<strong>').text(video.title),
-                $('<small>').text(`${video.storage === 'https' ? 'HTTPS 直链' : 'GCS'} · ${(video.size / 1048576).toFixed(1)} MiB · ${video.duration_seconds ?? '?'} 秒 · ${video.expires ? '到期 ' + new Date(video.expires).toLocaleString() : new Date(video.created).toLocaleString()}`),
-                $('<input class="text_pole" readonly>').val(video.url).on('click', function () { this.select(); }),
-                $('<div class="flex-container flexGap5">').append(
-                    $('<button type="button" class="menu_button">').text('复制地址').on('click', async () => {
-                        try { await navigator.clipboard.writeText(video.url); toastr.success('已复制视频地址。'); }
-                        catch { const field = list.find('input').filter((_, el) => el.value === video.url).get(0); field?.focus(); field?.select(); document.execCommand('copy'); toastr.info('已选择地址，可按 Ctrl+C 复制。'); }
-                    }),
-                    $('<button type="button" class="menu_button">').text('附加到本轮').on('click', () => {
-                        try { queueVideo(video.url, video.duration_seconds, video.title); toastr.success('已附加，关闭面板后输入问题并发送。'); }
-                        catch (error) { toastr.error(error.message); }
-                    }),
-                ),
+    let videos = [];
+    let page = 0;
+    const pageSize = 12;
+    let loading = false;
+    const search = $('<input type="search" class="text_pole" placeholder="搜索已加载的视频" aria-label="搜索视频">');
+    const filter = $('<select class="text_pole" aria-label="存储类型">').append($('<option value="all">').text('全部视频'), $('<option value="gcs">').text('GCS'), $('<option value="https">').text('临时直链'));
+    const count = $('<span class="gcs-muted" role="status">');
+    const previous = $('<button type="button" class="menu_button">').text('上一页');
+    const next = $('<button type="button" class="menu_button">').text('下一页');
+    const pageLabel = $('<span class="gcs-muted">');
+    const empty = $('<p class="gcs-empty">');
+    function formatDuration(value) {
+        if (!Number.isFinite(Number(value)) || Number(value) <= 0) return '时长未知';
+        const seconds = Math.round(Number(value));
+        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+    async function copyUrl(url, button) {
+        try { await navigator.clipboard.writeText(url); }
+        catch {
+            const fallback = $('<textarea class="gcs-copy-fallback">').val(url).appendTo(panel);
+            fallback[0].select(); const copied = document.execCommand('copy'); fallback.remove();
+            if (!copied) { toastr.error('复制失败，请展开地址后手动复制。'); return; }
+        }
+        button.text('已复制'); setTimeout(() => button.text('复制链接'), 1500);
+    }
+    function renderList() {
+        const term = String(search.val()).trim().toLocaleLowerCase();
+        const matches = videos.filter(video => (!term || video.title.toLocaleLowerCase().includes(term)) && (filter.val() === 'all' || (video.url.startsWith('https:') ? 'https' : 'gcs') === filter.val()));
+        const pages = Math.max(1, Math.ceil(matches.length / pageSize)); page = Math.min(page, pages - 1);
+        list.empty();
+        count.text(`${videos.length} 个已加载${nextPage ? ' · 还有更多' : ''}${term || filter.val() !== 'all' ? ` · ${matches.length} 个匹配` : ''}`);
+        if (!matches.length) list.append(empty.text(videos.length ? '没有匹配的视频。试试其他名称或存储类型。' : '视频库还是空的。选择“上传视频”或“链接导入”开始。'));
+        for (const video of matches.slice(page * pageSize, (page + 1) * pageSize)) {
+            const copy = $('<button type="button" class="menu_button gcs-subtle">').text('复制链接').on('click', () => copyUrl(video.url, copy));
+            const attach = $('<button type="button" class="menu_button gcs-primary">').text(pending?.url === video.url ? '已附加' : '附加').on('click', () => {
+                try { queueVideo(video.url, video.duration_seconds, video.title); renderList(); toastr.success('已附加到本轮，关闭视频库后发送问题。'); }
+                catch (error) { toastr.error(error.message); }
+            });
+            const direct = video.url.startsWith('https:');
+            const date = video.expires ? `到期 ${new Date(video.expires).toLocaleDateString()}` : new Date(video.created).toLocaleDateString();
+            const address = $('<details class="gcs-video-address">').append($('<summary>').text('查看链接'), $('<input class="text_pole" readonly aria-label="视频地址">').val(video.url).on('click', function () { this.select(); }));
+            $('<article class="gcs-video-list-item">').append(
+                $('<div class="gcs-video-main">').append($('<strong>').text(video.title).attr('title', video.title),
+                    $('<div class="gcs-video-meta">').append($('<span class="gcs-storage-label">').text(direct ? '临时直链' : 'GCS'), $('<span>').text(`${(video.size / 1048576).toFixed(1)} MiB`), $('<span>').text(formatDuration(video.duration_seconds)), $('<span>').text(date))),
+                $('<div class="gcs-actions">').append(copy, attach), address,
             ).appendTo(list);
         }
-        nextPage = data.nextPageToken;
+        pageLabel.text(`${page + 1} / ${pages}`); previous.prop('disabled', page === 0); next.prop('disabled', page + 1 >= pages);
         more.toggle(Boolean(nextPage));
+    }
+    search.on('input', () => { page = 0; renderList(); }); filter.on('change', () => { page = 0; renderList(); });
+    previous.on('click', () => { page--; renderList(); list[0].scrollTop = 0; });
+    next.on('click', () => { page++; renderList(); list[0].scrollTop = 0; });
+    async function refresh(append = false) {
+        if (loading) return;
+        loading = true; list.attr('aria-busy', 'true'); more.prop('disabled', true); refreshButton.prop('disabled', true);
+        try {
+            const response = await fetch(`${API}/videos${append && nextPage ? `?pageToken=${encodeURIComponent(nextPage)}` : ''}`, { headers: context().getRequestHeaders() });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '读取列表失败。');
+            const unique = new Map((append ? videos : []).map(video => [video.url, video]));
+            for (const video of data.items) unique.set(video.url, video);
+            videos = [...unique.values()].sort((a, b) => String(b.created).localeCompare(String(a.created)));
+            if (!append) page = 0;
+            nextPage = data.nextPageToken || ''; renderList();
+        } catch (error) { count.text(error.message); if (!videos.length) list.empty().append(empty.text('列表暂时不可用，请稍后刷新。')); }
+        finally { loading = false; list.attr('aria-busy', 'false'); more.prop('disabled', false); refreshButton.prop('disabled', false); }
     }
     fileInput.on('change', () => {
         selectedFile = fileInput[0].files?.[0];
@@ -82,7 +126,7 @@ async function showVideoManager() {
         if (!selectedFile) { toastr.warning('请先选择视频。'); return; }
         if (selectedFile.size > config.max_upload_bytes) { toastr.error('视频超过 2 GiB 上传上限。'); return; }
         controller = new AbortController();
-        active = true;
+        active = true; progress.show();
         upload.prop('disabled', true); pause.prop('disabled', false); fresh.prop('disabled', true); fileInput.prop('disabled', true);
         try {
             let saved = loadSaved();
@@ -136,7 +180,7 @@ async function showVideoManager() {
     }
     importButton.on('click', async () => {
         importButton.prop('disabled', true);
-        importStatus.text('正在海外检查文件并创建导入任务……');
+        importStatus.text('正在检查链接并创建导入任务…');
         try {
             const response = await fetch(`${API}/imports`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({ source_url: importUrl.val(), worker_id: importWorker.val() }) });
             const job = await response.json();
@@ -146,11 +190,49 @@ async function showVideoManager() {
             await pollImport(job.id);
         } catch (error) { importStatus.text(error.message); importButton.prop('disabled', false); }
     });
-    panel.append($('<h3>').text('视频库'), $('<p>').text('视频仅在自己的账号列表展示。直链与 GCS 的保留时间由部署配置决定。关闭面板会暂停浏览器上传，云端任务继续。'), fileInput, duration,
-        $('<div class="flex-container flexGap5">').append(upload, pause, fresh), progress, status,
-        $('<hr>'), $('<h4>').text('从链接云端导入'), $('<p>').text('所选节点支持公网 HTTPS 视频直链及 Iwara、B站公开播放页；小视频保留直链，大视频上传 GCS。自动识别链接类型和视频时长，无需本地下载。登录限制会报告失败；关闭面板后任务继续。'),
-        importUrl, $('<label>').text('导入节点').append(importWorker), importButton, importStatus, refreshButton, list, more);
-    refresh().catch(error => status.text(error.message));
+    const tabs = $('<div class="gcs-tabs" role="tablist" aria-label="视频库功能">');
+    const pages = new Map();
+    function selectTab(id) {
+        for (const [key, value] of pages) { const selected = key === id; value.button.attr({ 'aria-selected': String(selected), tabindex: selected ? 0 : -1 }); value.body.prop('hidden', !selected); }
+    }
+    function addTab(id, title, body) {
+        const button = $('<button type="button" role="tab">').attr({ id: `gcs-tab-${id}`, 'aria-controls': `gcs-panel-${id}` }).text(title).on('click', () => selectTab(id));
+        button.on('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault(); const keys = [...pages.keys()]; let at = keys.indexOf(id);
+            at = event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : (at + (event.key === 'ArrowRight' ? 1 : -1) + keys.length) % keys.length;
+            selectTab(keys[at]); pages.get(keys[at]).button.trigger('focus');
+        });
+        body.addClass('gcs-tab-panel').attr({ role: 'tabpanel', id: `gcs-panel-${id}`, 'aria-labelledby': `gcs-tab-${id}` });
+        pages.set(id, { button, body }); tabs.append(button); panel.append(body);
+    }
+    panel.append($('<header class="gcs-library-header">').append($('<div>').append($('<h3>').text('视频库'), $('<p class="gcs-muted">').text('选择视频附加到本轮对话。'))), tabs);
+    const libraryPanel = $('<section>').append($('<div class="gcs-library-toolbar">').append(search, filter, refreshButton),
+        $('<div class="gcs-library-summary">').append(count), list,
+        $('<footer class="gcs-list-footer">').append(more, $('<div class="gcs-pagination">').append(previous, pageLabel, next)));
+    addTab('library', '我的视频', libraryPanel);
+    addTab('upload', '上传视频', $('<section class="gcs-form-panel">').append(
+        $('<label class="gcs-field">').append($('<span>').text('选择本地视频'), fileInput),
+        $('<label class="gcs-field">').append($('<span>').text('视频时长（秒，自动读取后可修正）'), duration),
+        $('<div class="gcs-actions">').append(upload, pause, fresh), progress, status,
+        $('<p class="gcs-muted">').text('文件直接上传到 GCS。关闭面板会暂停上传，重新选择同一文件可继续。')));
+    addTab('import', '链接导入', $('<section class="gcs-form-panel">').append(
+        $('<label class="gcs-field">').append($('<span>').text('视频链接'), importUrl),
+        $('<div class="gcs-import-controls">').append($('<label class="gcs-field">').append($('<span>').text('处理节点'), importWorker), importButton), importStatus,
+        $('<p class="gcs-muted">').text('支持视频直链、Iwara 和 B站。自动读取时长并选择存储，关闭面板后任务继续。')));
+    if (!config.import_workers.length) { importButton.prop('disabled', true); importStatus.text('管理员尚未添加导入节点。'); }
+    if (config.admin) {
+        const settingsPanel = $('<section>').text('正在读取设置…'); addTab('settings', '设置', settingsPanel);
+        createSettingsPanel(context, async () => {
+            config = await (await fetch(`${API}/config`, { headers: context().getRequestHeaders() })).json();
+            importWorker.empty(); for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label));
+            importWorker.val(config.default_import_worker); importButton.prop('disabled', !config.import_workers.length);
+            upload.prop('disabled', !config.configured); await refresh();
+        }).then(form => settingsPanel.empty().append(form)).catch(error => settingsPanel.text(error.message));
+    }
+    selectTab(config.configured ? 'library' : config.admin ? 'settings' : 'library');
+    if (config.configured) refresh();
+    else { upload.prop('disabled', true); count.text('请管理员先完成视频工具设置。'); }
     const importId = sessionStorage.getItem(importKey);
     if (importId) pollImport(importId);
     await new Popup(panel, POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: '关闭' }).show();

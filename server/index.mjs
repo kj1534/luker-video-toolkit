@@ -4,10 +4,11 @@ import { pathToFileURL } from 'node:url';
 import { validateVideo, createRelay } from './relay.mjs';
 import { createStorage } from './storage.mjs';
 import { createImportWorkers } from './workers.mjs';
+import { loadConfig, visibleSettings, prepareSettings, commitSettings, isAdmin } from './settings.mjs';
 
 export const info = { id: 'gcs-video', name: 'Video Toolkit', description: 'Turn-scoped private GCS video attachments using the existing native Gemini connection.' };
 const configFile = path.resolve(process.cwd(), 'config/gcs-video/config.json');
-const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+const config = loadConfig(configFile);
 const catalogFile = path.resolve(path.dirname(configFile), 'direct-videos.json');
 let relay;
 let ready;
@@ -17,7 +18,8 @@ let fetchImpl;
 const importTokens = new Map();
 let importPoller;
 const importJobs = new Map();
-const workers = createImportWorkers(config);
+let workers = createImportWorkers(config);
+let saving = false;
 
 async function worker(workerId, route, body) {
     const response = await fetchImpl(workers.get(workerId).url + route, {
@@ -31,6 +33,7 @@ async function worker(workerId, route, body) {
 
 
 function completeDirectImport(entry, job) {
+    if (['complete', 'failed'].includes(job.status)) entry.finished = true;
     if (job.status !== 'complete' || !job.video) return false;
     if (!entry.submitted) {
         validateVideo(job.video, config);
@@ -58,8 +61,48 @@ export function init(router) {
     router.get('/config', async (request, response) => {
         try {
             await ready;
-            response.json({ model: config.model, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker });
+            response.json({ configured: Boolean(storage), admin: isAdmin(request), model: config.model, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker });
         } catch { response.status(503).json({ error: 'GCS video plugin is unavailable.' }); }
+    });
+    router.get('/settings', (request, response) => {
+        if (!isAdmin(request)) return response.sendStatus(403);
+        response.set('Cache-Control', 'no-store').json(visibleSettings(config));
+    });
+    router.post('/settings', async (request, response) => {
+        if (!isAdmin(request)) return response.sendStatus(403);
+        if (saving) return response.status(409).json({ error: '配置正在保存，请稍后重试。' });
+        saving = true;
+        try {
+            await ready;
+            for (const entry of importJobs.values()) {
+                if (entry.error || entry.finished) continue;
+                let job;
+                try { job = await worker(entry.workerId, `/jobs/${encodeURIComponent(entry.remoteId)}`); }
+                catch { return response.status(409).json({ error: '暂时无法确认已有导入任务状态，请稍后重试。' }); }
+                if (!['complete', 'failed'].includes(job.status)) return response.status(409).json({ error: '请等待当前导入完成后再修改配置。' });
+                entry.finished = true;
+            }
+            let prepared;
+            try { prepared = prepareSettings(request.body, config, path.dirname(configFile)); }
+            catch (error) { return response.status(400).json({ error: error.message }); }
+            commitSettings(configFile, prepared);
+            Object.assign(config, prepared.config);
+            storage = createStorage(config, fetchImpl);
+            workers = createImportWorkers(config);
+            importTokens.clear();
+            for (const item of config.import_workers) importTokens.set(item.id, fs.readFileSync(item.token_file, 'utf8').trim());
+            response.set('Cache-Control', 'no-store').json({ ok: true, settings: visibleSettings(config) });
+        } catch { response.status(500).json({ error: '保存失败，请检查服务端配置目录权限。' }); }
+        finally { saving = false; }
+    });
+    router.post('/settings/test', async (request, response) => {
+        if (!isAdmin(request)) return response.sendStatus(403);
+        await ready;
+        const checks = await Promise.all([
+            (async () => { try { await storage.list(request.user.profile.handle); return { label: 'GCS', ok: true }; } catch { return { label: 'GCS', ok: false }; } })(),
+            ...config.import_workers.map(async item => { try { await worker(item.id, '/healthz'); return { label: item.label, ok: true }; } catch { return { label: item.label, ok: false }; } }),
+        ]);
+        response.set('Cache-Control', 'no-store').json({ checks });
     });
     router.get('/videos', async (request, response) => {
         try {
@@ -123,8 +166,10 @@ export function init(router) {
     ready = (async () => {
         ({ default: fetchImpl } = await import('node-fetch'));
         secretModule = await import(pathToFileURL(path.join(process.cwd(), 'src/endpoints/secrets.js')).href);
-        storage = createStorage(config, fetchImpl);
-        for (const item of config.import_workers) importTokens.set(item.id, fs.readFileSync(item.token_file, 'utf8').trim());
+        if (config.credential_file && config.bucket && config.model && config.upstream) {
+            try { storage = createStorage(config, fetchImpl); } catch { console.warn('[Video Toolkit] Configure storage in the administrator settings.'); }
+        }
+        for (const item of config.import_workers) { try { importTokens.set(item.id, fs.readFileSync(item.token_file, 'utf8').trim()); } catch {} }
         importPoller = setInterval(() => {
             for (const [id, entry] of importJobs) {
                 if (entry.created < Date.now() - 86400000) { importJobs.delete(id); continue; }

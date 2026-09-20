@@ -10,5 +10,6 @@ test('worker selection uses only server IDs, keeps default explicit and exposes 
     assert.equal(workers.get('secondary').url, 'https://secondary.example/gcs-import');
     for (const input of ['https://attacker.example', '__proto__', '', null, {}, 'kr1']) assert.throws(() => workers.get(input));
     assert.deepEqual(workers.publicList, [{ id: 'primary', label: 'Primary', web_imports: false }, { id: 'secondary', label: 'Backup', web_imports: false }]);
-    assert.throws(() => createImportWorkers({ default_import_worker: 'other', import_workers: [] }));
+    assert.equal(createImportWorkers({ default_import_worker: '', import_workers: [] }).publicList.length, 0);
+    assert.throws(() => createImportWorkers({ default_import_worker: 'other', import_workers: [{id:'one',url:'https://one.example'}] }));
 });

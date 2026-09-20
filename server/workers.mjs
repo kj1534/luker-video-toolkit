@@ -7,7 +7,7 @@ export function createImportWorkers(config) {
         if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Invalid configured import worker URL');
         entries.set(item.id, { ...item, url: item.url.replace(/\/$/, '') });
     }
-    if (!entries.has(config.default_import_worker)) throw new Error('Missing default import worker');
+    if (entries.size && !entries.has(config.default_import_worker)) throw new Error('Missing default import worker');
     return {
         publicList: [...entries.values()].map(({ id, label, web_imports }) => ({ id, label, web_imports: Boolean(web_imports) })),
         get(id = config.default_import_worker) {
