@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+config.json
+*.token
+*.pem
+*.key
+*service-account*.json
+private/
+state/
+dist/

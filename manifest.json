@@ -1,0 +1,12 @@
+{
+  "display_name": "Video Toolkit",
+  "loading_order": 120,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Video Toolkit contributors",
+  "version": "0.1.0",
+  "homePage": "https://github.com/kj1534/luker-video-toolkit",
+  "auto_update": true
+}

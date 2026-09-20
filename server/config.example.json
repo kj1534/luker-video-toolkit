@@ -1,0 +1,16 @@
+{
+  "upstream": "https://gemini-gateway.example",
+  "model": "your-vertex-video-model",
+  "bucket": "your-private-video-bucket",
+  "port": 18779,
+  "prepare_ttl_ms": 120000,
+  "request_timeout_ms": 300000,
+  "credential_file": "/path/to/luker/config/gcs-video/uploader.json",
+  "max_upload_bytes": 2147483648,
+  "https_max_bytes": 14000000,
+  "direct_media_origins": ["https://media.example"],
+  "default_import_worker": "primary",
+  "import_workers": [
+    {"id": "primary", "label": "Primary video node", "url": "https://worker.example/video-import", "token_file": "/path/to/luker/config/gcs-video/primary.token"}
+  ]
+}

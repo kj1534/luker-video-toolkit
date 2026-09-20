@@ -1,0 +1,29 @@
+{
+  "port": 3924,
+  "token_file": "/etc/video-toolkit/control.token",
+  "bucket": "your-private-video-bucket",
+  "max_bytes": 2147483648,
+  "download_directory": "/var/lib/video-toolkit/downloads",
+  "download_timeout_seconds": 1800,
+  "yt_dlp": "/opt/video-toolkit/venv/bin/yt-dlp",
+  "ffprobe": "/usr/bin/ffprobe",
+  "small_video": {
+    "enabled": true,
+    "max_bytes": 14000000,
+    "copyparty": {
+      "api_url": "http://127.0.0.1:3923/imports/",
+      "public_url": "https://media.example/imports/",
+      "username": "video-import",
+      "password_file": "/etc/video-toolkit/copyparty.password",
+      "retention_seconds": 259200
+    }
+  },
+  "install_directory": "/opt/video-toolkit",
+  "service_user": "video-toolkit",
+  "service_name": "video-toolkit",
+  "resources": {
+    "memory_high": "256M",
+    "memory_max": "384M",
+    "cpu_quota": "100%"
+  }
+}

@@ -1,0 +1,9 @@
+.gcs-video-badge { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .5rem; border: 1px solid var(--SmartThemeBorderColor); border-radius: .4rem; }
+.gcs-video-badge span { overflow-wrap: anywhere; flex: 1; }
+.gcs-video-dialog { display: flex; flex-direction: column; gap: .75rem; text-align: left; }
+.gcs-video-dialog label { display: flex; flex-direction: column; gap: .25rem; }
+.gcs-video-dialog p { margin: 0; opacity: .8; }
+.gcs-video-manager { display: flex; flex-direction: column; gap: .75rem; text-align: left; }
+.gcs-video-manager progress { width: 100%; }
+.gcs-video-list { display: flex; flex-direction: column; gap: .75rem; }
+.gcs-video-list-item { display: flex; flex-direction: column; gap: .35rem; padding: .75rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor); }
