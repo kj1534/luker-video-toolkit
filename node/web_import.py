@@ -3,6 +3,7 @@ import json
 import mimetypes
 import copyparty_store
 import gcs_read
+import naming
 import math
 import urllib.parse
 import os
@@ -46,9 +47,7 @@ def finish_file(job, file, title, mime, config):
         duration = float(media['format']['duration'])
         if not media.get('streams') or not math.isfinite(duration) or duration <= 0:
             raise ValueError('文件不包含可识别的音视频或有效时长。')
-    title = re.sub(r'[\\/\x00-\x1f]', '_', title)[:150] or 'video'
-    if not title.lower().endswith(file.suffix):
-        title += file.suffix
+    title = naming.filename(title,file.suffix)
     metadata = {'filename': title, 'size': size, 'mime_type': mime, 'duration_seconds': duration}
     job.update(total=size, done=size, metadata=metadata)
     small = config['small_video']
@@ -127,7 +126,7 @@ def download(job, url, config, proxy):
                    '--max-filesize', str(config['max_bytes']), '--match-filter', '!is_live',
                    '--format', 'bv*[protocol=https]+ba[protocol=https]/b[protocol=https]',
                    '--merge-output-format', 'mp4', '--remux-video', 'mp4',
-                   '--output', directory + '/video.%(ext)s', '--print', 'after_move:%(title)s', '--', page_url(url)]
+                   '--output', directory + '/video.%(ext)s', '--print', 'after_move:{"id":%(id)j,"title":%(title)j,"uploader":%(uploader)j,"uploader_id":%(uploader_id)j}', '--', page_url(url)]
         # Logs may contain expiring URLs; keep only in this private temporary directory.
         with open(directory + '/output.log', 'wb') as output, open(directory + '/error.log', 'wb') as errors:
             process = subprocess.Popen(command, stdout=output, stderr=errors, start_new_session=True)
@@ -144,7 +143,8 @@ def download(job, url, config, proxy):
                 raise ValueError('网站要求登录、限制服务器访问或视频不可公开下载；未使用浏览器登录凭据。')
             raise ValueError('网站解析或下载失败；此链接可能不可公开访问，或解析器需要更新。')
         file = pathlib.Path(directory + '/video.mp4')
-        title = pathlib.Path(directory + '/output.log').read_text(errors='replace').strip().splitlines()[-1]
+        info = json.loads(pathlib.Path(directory + '/output.log').read_text(errors='replace').strip().splitlines()[-1])
+        title = naming.webpage_name(info,validate_https(url).hostname.endswith('iwara.tv'))
         finish_file(job, file, title, 'video/mp4', config)
     except Exception as error:
         if process and process.poll() is None:

@@ -39,7 +39,7 @@ def install(config_path, source):
         raise ValueError('Invalid release version')
     backup = prefix / 'previous'
     backup.mkdir(exist_ok=True)
-    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'library.py', 'gcs_read.py', 'local_upload.py', 'requirements.lock.txt']
+    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'library.py', 'gcs_read.py', 'local_upload.py', 'naming.py', 'requirements.lock.txt']
     for name in names:
         if (prefix / name).exists():
             shutil.copy2(prefix / name, backup / name)

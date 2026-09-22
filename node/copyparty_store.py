@@ -5,6 +5,7 @@ import pathlib
 import urllib.parse
 import urllib.request
 import uuid
+import naming
 from datetime import datetime, timedelta, timezone
 
 
@@ -15,7 +16,10 @@ def publish(file, metadata, config):
     public = config['public_url'].rstrip('/') + '/'
     if urllib.parse.urlsplit(public).scheme != 'https':
         raise ValueError('Copyparty public URL must use HTTPS')
-    name = uuid.uuid4().hex + '-' + pathlib.Path(metadata['filename']).name
+    readable=naming.filename(pathlib.Path(metadata['filename']).name)
+    suffix=pathlib.Path(readable).suffix
+    stem=readable[:-len(suffix)] if suffix else readable
+    name=stem+' [v-'+uuid.uuid4().hex[:12]+']'+suffix
     target = urllib.parse.urljoin(base, urllib.parse.quote(name, safe=''))
     source = pathlib.Path(file).open('rb')
     request = urllib.request.Request(target, data=source, method='PUT', headers={'Authorization': authorization, 'Content-Type': 'application/octet-stream', 'Content-Length': str(pathlib.Path(file).stat().st_size), 'Accept': 'application/json'})

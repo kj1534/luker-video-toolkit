@@ -10,6 +10,10 @@ export function fileCopyKey(user, file, destination = 'gcs', target = {}) {
 export function registerFileLibrary(router, dependencies) {
     const { config, worker, storage, startJob, catalog, copyFile, forgetCatalog } = dependencies;
     const enrich = item => ({ ...item, ...fileInfo(item.title || item.url) });
+    function displayNames(items,user) {
+        const names=new Map(catalog(user).map(item=>[item.url.split('?')[0],item.title]));
+        return items.map(item=>item.is_directory?item:({...item,title:names.get(item.url.split('?')[0]) || item.title}));
+    }
     const sharedWorker = (request, id) => {
         if (!isAdmin(request)) throw Object.assign(new Error('共享目录仅管理员可管理。'), {status:403});
         if (!config.import_workers.some(item => item.id === id && item.library_enabled)) throw new Error('该节点未启用共享文件库。');
@@ -37,7 +41,8 @@ export function registerFileLibrary(router, dependencies) {
         if (ref.storage === 'gcs') return enrich(await storage().stat(ref.url, user));
         if (ref.storage === 'copyparty') {
             sharedWorker(request, ref.worker_id);
-            return enrich({ ...await worker(ref.worker_id, '/library/file', { volume: ref.volume, path: ref.path }), worker_id: ref.worker_id });
+            const file={...await worker(ref.worker_id,'/library/file',{volume:ref.volume,path:ref.path}),worker_id:ref.worker_id};
+            return enrich(displayNames([file],user)[0]);
         }
         if (ref.storage === 'https') {
             const file = catalog(user).find(item => item.url === ref.url);
@@ -80,7 +85,7 @@ export function registerFileLibrary(router, dependencies) {
         if (source === 'copyparty') {
             const id = sharedWorker(request, request.query.worker_id);
             const data = await worker(id, '/library/list', { volume: request.query.volume, path: request.query.path || '' });
-            return { ...data, items: data.items.map(item => enrich({ ...item, worker_id: id })), nextPageToken: '', errors: [] };
+            return { ...data, items: displayNames(data.items,user).map(item => enrich({ ...item, worker_id: id })), nextPageToken: '', errors: [] };
         }
         if (!['all', 'gcs'].includes(source)) throw new Error('未知存储来源。');
         const result = await storage().list(user, String(request.query.pageToken || ''));
@@ -100,7 +105,7 @@ export function registerFileLibrary(router, dependencies) {
         // A previously imported direct reference may also appear in a live copyparty listing.
         const unique = new Map();
         for (const item of result.items) if (!unique.has(item.url) || item.storage === 'copyparty') unique.set(item.url, enrich(item));
-        result.items = [...unique.values()].sort((a,b) => Number(b.is_directory || false) - Number(a.is_directory || false) || String(b.created).localeCompare(String(a.created)));
+        result.items = displayNames([...unique.values()],user).sort((a,b) => Number(b.is_directory || false) - Number(a.is_directory || false) || String(b.created).localeCompare(String(a.created)));
         return result;
     }));
     router.post('/file-access', endpoint(async request => {
