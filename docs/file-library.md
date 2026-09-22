@@ -6,7 +6,7 @@
 
 本插件每轮附加一个文件，可与 Luker 原生的其他附件混用。链接导入默认勾选同步到 copyparty，可取消以仅保留自动选择的一份：
 
-- 本地文件由浏览器直接上传 GCS。
+- 本地上传默认“自动”：不超过阈值只存 copyparty，更大的文件先保存 copyparty，再由同一节点上传 GCS。浏览器只上传一次。可选“仅 copyparty”“两边各一份”，或主动选择“仅 GCS”由浏览器直传。共享存储上传仅管理员可用，普通用户保留自己的 GCS 直传。
 - 链接导入默认将不超过配置阈值的文件存到 copyparty，更大的文件上传 GCS。
 - 已在 copyparty 的受支持小文件直接附加 HTTPS 地址；超过阈值时，“上传并附加”先复制到 GCS。再次附加会复用仍然存在的 GCS 副本。
 - “复制到另一存储”保留原文件。GCS → copyparty 由管理员配置的 GCS 读取节点读取，再上传目标目录。再次复制会复用仍存在且未变化的副本。
@@ -64,3 +64,9 @@ GCS 上传账号要使用删除功能，还需要目标桶的 `storage.objects.d
 - [Cloud Storage 价格](https://cloud.google.com/storage/pricing)
 - [Google Cloud VPC 网络价格](https://cloud.google.com/vpc/network-pricing)
 - [Gemini 文件输入](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata)
+
+## 本地上传与操作提示
+
+上传节点使用配置的默认 copyparty 节点与目标卷。浏览器以 4 MiB 分片发送，每次最多缓存 256 KiB 到本地临时文件；控制令牌与 copyparty 密码不发送给浏览器。上传票据只允许单文件和指定浏览器 Origin，闲置一小时失效；暂停后可重选同一文件续传。节点/插件重启后未完成会话需重新创建。节点收到完整文件后，通过 copyparty 接口登记，保留临时文件供需要的 GCS 上传复用，完成后清理。反向代理需允许 5 MiB 请求并关闭请求缓冲，见 Nginx 示例。
+
+按钮统一描述用户目的，内部传输由说明确认：GCS 预览/下载先复用或创建 copyparty 副本；较大的 copyparty 文件附加前复用或上传 GCS。每行“管理 → 操作说明”可查看全部行为。“删除这一份”只删除当前存储对象。成功提示约 4.5 秒后消失；刷新和下一项操作会清除旧提示。

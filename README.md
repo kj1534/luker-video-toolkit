@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **本地上传**：浏览器直接上传到私有 Google Cloud Storage（GCS）。
+- **本地上传**：默认只向 copyparty 节点上传一份，小文件保存 copyparty，大文件由节点再上传 GCS；也可手动选择存储。
 - **链接导入**：支持 HTTPS 文件直链，以及 Iwara、B站播放页；可选择处理节点，默认勾选同步保存到 copyparty，可取消。
 - **自动选择存储**：默认不超过 14 MB 的导入视频存放到 copyparty，较大视频上传到 GCS。
 - **统一文件库**：实时读取 GCS 和 copyparty 目录，搜索、筛选、分页浏览。

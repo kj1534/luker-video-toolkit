@@ -34,3 +34,14 @@ test('expired sessions fail instead of silently overwriting or restarting files'
     const file = new File([new Uint8Array(10)], 'test.mp4');
     await assert.rejects(uploadResumable(file, 'https://storage.googleapis.com/session', { fetchImpl: async () => new Response('', { status: 410 }) }), /410/);
 });
+
+test('copyparty node upload resumes without sending chunks to Google',async()=>{
+    const {uploadToNode}=await import('../upload.js');
+    const file=new File(['abcdefgh'],'test.txt');let offset=4;const chunks=[];
+    await uploadToNode(file,'https://node.example/upload-data/test',{chunkSize:4,fetchImpl:async(url,options={})=>{
+        assert.equal(url,'https://node.example/upload-data/test');assert.equal(options.credentials,'omit');
+        if(options.method==='PUT'){chunks.push(options.headers['Content-Range']);assert.equal(await options.body.text(),'efgh');offset=8;}
+        return new Response(JSON.stringify({offset,complete:offset===8}),{status:200});
+    }});
+    assert.deepEqual(chunks,['bytes 4-7/8']);
+});

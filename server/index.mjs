@@ -84,7 +84,7 @@ async function completeDirectImport(entry, job) {
     if (!entry.submitted) {
         // Unknown formats remain manageable files, but cannot be sent as model attachments.
         // Explicit storage copies may exceed the HTTP attachment limit; attach promotes them to GCS.
-        if (!entry.originGcs && fileInfo(job.video.url).attachable) validateVideo(job.video, config);
+        if (!entry.originGcs && !entry.localUpload && fileInfo(job.video.url).attachable) validateVideo(job.video, config);
         saveDirectVideo(entry.user, job.video);
         entry.video = job.video;
         entry.submitted = true;
@@ -126,7 +126,7 @@ export function init(router) {
     router.get('/config', async (request, response) => {
         try {
             await ready;
-            response.json({ configured: Boolean(storage), admin: isAdmin(request), models: config.models, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker });
+            response.json({ configured: Boolean(storage), admin: isAdmin(request), models: config.models, bucket: config.bucket, upstream: config.upstream, scope: 'turn', max_upload_bytes: config.max_upload_bytes, user: request.user?.profile?.handle, https_max_bytes: config.https_max_bytes, direct_media_origins: config.direct_media_origins, import_workers: workers.publicList, default_import_worker: config.default_import_worker, local_upload_available: isAdmin(request) && Boolean(config.copyparty_worker && config.copyparty_volume), copyparty_label: config.import_workers.find(item=>item.id===config.copyparty_worker)?.label || 'copyparty' });
         } catch { response.status(503).json({ error: 'GCS video plugin is unavailable.' }); }
     });
     router.get('/settings', (request, response) => {
@@ -190,6 +190,28 @@ export function init(router) {
                 : { duration_seconds: readDirectVideos(handle).find(item => item.url === video.url)?.duration_seconds || null };
             response.set('Cache-Control', 'no-store').json(data);
         } catch { response.status(400).json({ error: '无法读取时长，可留空后继续附加。' }); }
+    });
+    router.post('/local-uploads', async (request,response)=>{
+        try {
+            await ready;
+            if (!isAdmin(request)) return response.sendStatus(403);
+            const node=workers.get(config.copyparty_worker);
+            if (!node.library_enabled) throw new Error('请配置可管理的 copyparty 上传节点。');
+            const body=request.body || {};
+            const result=await worker(node.id,'/local-uploads',{filename:body.filename,size:body.size,mime_type:fileInfo(body.filename).mime_type,origin:request.headers.origin,mode:body.mode,threshold:config.https_max_bytes,volume:config.copyparty_volume});
+            const id=`${node.id}:${result.id}`;
+            importJobs.set(id,{user:request.user.profile.handle,workerId:node.id,remoteId:result.id,created:Date.now(),localUpload:true});
+            response.set('Cache-Control','no-store').json({id,session:node.url+'/upload-data/'+result.ticket,chunk_size:result.chunk_size,size:body.size});
+        } catch {response.status(400).json({error:'无法创建 copyparty 上传会话，请检查节点与存储配置。'});}
+    });
+    router.post('/local-uploads/finish', async (request,response)=>{
+        try {
+            if (!isAdmin(request)) return response.sendStatus(403);
+            const entry=importJobs.get(request.body?.id);
+            if (!entry || entry.user!==request.user.profile.handle) return response.sendStatus(404);
+            await worker(entry.workerId,`/local-uploads/${entry.remoteId}/finish`,{});
+            response.json({job:{id:request.body.id,worker_id:entry.workerId}});
+        } catch {response.status(400).json({error:'文件尚未完整上传或会话已过期，请继续上传或重新开始。'});}
     });
     router.post('/uploads', async (request, response) => {
         try {

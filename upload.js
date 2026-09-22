@@ -49,3 +49,28 @@ export async function uploadResumable(file, session, { signal, onProgress = () =
     if (!state.complete) state = await probe();
     if (!state.complete) throw new Error('视频上传尚未完成，可选择相同文件继续。');
 }
+
+/** Browser sends each chunk only to the configured copyparty node; Google copying is server-side. */
+export async function uploadToNode(file, session, { signal, onProgress = () => {}, fetchImpl = fetch, chunkSize = 4 * 1024 * 1024 } = {}) {
+    async function probe() {
+        const response=await fetchImpl(session,{signal,credentials:'omit'});
+        if(!response.ok)throw new Error('上传会话已失效，请重新开始。');
+        const data=await response.json();
+        if(!Number.isSafeInteger(data.offset)||data.offset<0||data.offset>file.size)throw new Error('上传节点返回无效进度。');
+        return data.offset;
+    }
+    let done=await probe(), failures=0;onProgress(done,file.size);
+    while(done<file.size) {
+        const end=Math.min(done+chunkSize,file.size);
+        try {
+            const response=await fetchImpl(session,{method:'PUT',credentials:'omit',signal,headers:{'Content-Type':'application/octet-stream','Content-Range':`bytes ${done}-${end-1}/${file.size}`},body:file.slice(done,end)});
+            if(!response.ok)throw new Error('分片上传失败，将查询进度后重试。');
+            const data=await response.json();if(data.offset!==end)throw new Error('上传进度不一致。');
+            done=end;failures=0;
+        } catch(error) {
+            if(signal?.aborted||++failures>3)throw error;
+            await new Promise(resolve=>setTimeout(resolve,1000*failures));done=await probe();
+        }
+        onProgress(done,file.size);
+    }
+}

@@ -15,6 +15,7 @@ import argparse
 import copy
 import gcs_read
 import library
+import local_upload
 from source_fetch import open_source, validate_https, start_proxy
 import web_import
 
@@ -113,7 +114,7 @@ def new_job():
         for key in list(JOBS):
             if JOBS[key].get('finished', time.time()) < time.time() - 86400:
                 del JOBS[key]
-        if sum(j['status'] in ('queued', 'downloading', 'publishing', 'ready', 'running') for j in JOBS.values()) >= 8:
+        if sum(j['status'] in ('queued', 'receiving', 'downloading', 'publishing', 'ready', 'running') for j in JOBS.values()) >= 8:
             raise ValueError('Import queue is full')
         job_id = uuid.uuid4().hex
         JOBS[job_id] = {'id': job_id, 'status': 'queued', 'done': 0, 'total': 0}
@@ -125,6 +126,8 @@ def reap_downloads():
         time.sleep(60)
         with LOCK:
             for job in JOBS.values():
+                if job['status']=='receiving' and time.time()>job.get('_upload_expires',0):
+                    job.update(status='failed',error='本地上传会话已过期。',finished=time.time());web_import.cleanup(job)
                 if job['status'] == 'ready' and time.time() - job['ready_at'] > 3600:
                     job.update(status='failed', error='等待上传会话超时，请重新导入。', finished=time.time())
                     web_import.cleanup(job)
@@ -137,6 +140,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def reply(self, code, value):
         body = json.dumps(value).encode()
         self.send_response(code)
+        if getattr(self,'_cors_origin',None):
+            self.send_header('Access-Control-Allow-Origin',self._cors_origin)
+            self.send_header('Vary','Origin')
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
@@ -150,7 +156,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return False
         return True
 
+    def upload_ticket(self):
+        ticket=self.path.removeprefix('/upload-data/')
+        with LOCK:
+            job=next((job for job in JOBS.values() if job.get('_upload_token')==ticket),None)
+        if not job or job.get('_upload_expires',0)<time.time() or self.headers.get('Origin')!=job['_origin']:
+            self.reply(403,{'error':'Upload ticket invalid or expired'});return None
+        self._cors_origin=job['_origin']
+        return job
+
+    def do_OPTIONS(self):
+        if not self.path.startswith('/upload-data/'):return self.reply(404,{'error':'Not found'})
+        if not self.upload_ticket():return
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin',self._cors_origin)
+        self.send_header('Access-Control-Allow-Methods','GET, PUT, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers','Content-Type, Content-Range')
+        self.send_header('Access-Control-Max-Age','600')
+        self.send_header('Vary','Origin')
+        self.end_headers()
+
+    def do_PUT(self):
+        if not self.path.startswith('/upload-data/'):return self.reply(404,{'error':'Not found'})
+        job=self.upload_ticket()
+        if not job:return
+        self.connection.settimeout(60)
+        try:
+            with job['_upload_lock']:
+                result=local_upload.receive(job,self.rfile,int(self.headers.get('Content-Length','0')),self.headers.get('Content-Range',''))
+            self.reply(200,result)
+        except Exception:
+            self.close_connection=True
+            self.reply(409,{'error':'Chunk rejected; query current offset before retry'})
+
     def do_GET(self):
+        if self.path.startswith('/upload-data/'):
+            job=self.upload_ticket()
+            if job:
+                with job['_upload_lock']:
+                    self.reply(200,{'offset':job['done'],'complete':job['done']==job['total']})
+            return
         if not self.authorized():
             return
         if self.path == '/library/roots':
@@ -170,6 +215,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= 16384:
                 raise ValueError('Invalid request size')
             body = json.loads(self.rfile.read(length))
+            if self.path == '/local-uploads':
+                job_id=new_job();job=JOBS[job_id]
+                try:
+                    result=local_upload.create(job,body,CONFIG);job['_upload_lock']=threading.Lock()
+                except Exception:
+                    job.update(status='failed',finished=time.time());web_import.cleanup(job);raise
+                return self.reply(201,result)
+            if self.path.startswith('/local-uploads/') and self.path.endswith('/finish'):
+                job=JOBS.get(self.path.split('/')[2])
+                if not job or '_upload_lock' not in job:raise ValueError('Unknown upload')
+                with job['_upload_lock']:
+                    if job['status']!='receiving':return self.reply(200,{'id':job['id']})
+                    if job['done']!=job['total']:raise ValueError('Upload incomplete')
+                    job['status']='queued'
+                    def publish():
+                        try:web_import.finish_file(job,pathlib.Path(job['_file']),job['_filename'],job['_mime'],job['_upload_config'])
+                        except Exception:
+                            job.update(status='failed',error='文件保存失败，请重新上传。',finished=time.time());web_import.cleanup(job)
+                    POOL.submit(publish)
+                return self.reply(202,{'id':job['id']})
             if self.path == '/library/list':
                 return self.reply(200, library.list_files(CONFIG, body.get('volume'), body.get('path', '')))
             if self.path == '/library/file':
