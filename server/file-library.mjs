@@ -107,13 +107,8 @@ export function registerFileLibrary(router, dependencies) {
         const file = await resolve(request, request.body.file || {});
         const download = request.body.download === true;
         if (file.storage === 'gcs') {
-            if (!download) throw new Error('GCS 文件不提供在线预览；请先复制到 copyparty，再从该副本播放或预览。');
-            const node = config.import_workers.find(item=>item.id===config.gcs_read_worker);
-            if (!node) throw new Error('请先配置 GCS 读取节点。');
-            const signed = await storage().access(file.url, request.user.profile.handle, true);
-            const ticket = await worker(node.id, '/downloads', {url:signed.url,filename:file.title});
-            if (!/^[A-Za-z0-9_-]{32,100}$/.test(ticket.ticket)) throw new Error('下载节点返回无效票据。');
-            return {file,url:node.url.replace(/\/$/,'')+'/downloads/'+ticket.ticket,expires_at:new Date(Date.now()+ticket.expires_seconds*1000).toISOString()};
+            if (!config.copyparty_worker || !config.copyparty_volume) throw new Error('请先配置默认 copyparty 目标。');
+            return promote(request,file,'copyparty',{worker_id:config.copyparty_worker,volume:config.copyparty_volume});
         }
         return { file, url: file.url + (download ? (file.url.includes('?') ? '&' : '?') + 'dl' : ''), expires_at: file.expires || null };
     }));

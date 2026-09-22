@@ -24,12 +24,18 @@ export async function createSettingsPanel(context, onSaved) {
     const nodeRows = [];
     const defaultSelect = $('<select class="text_pole" aria-label="默认导入节点">');
     const readSelect = $('<select class="text_pole" aria-label="GCS 读取节点">');
+    const copySelect = $('<select class="text_pole" aria-label="copyparty 目标节点">');
+    const copyVolume = field('copyparty 目标卷 ID',current.copyparty_volume || 'imports');
     function updateDefaults() {
         const selected = defaultSelect.val() || current.default_import_worker;
         const reader = readSelect.val() || current.gcs_read_worker;
         readSelect.empty().append($('<option>').val('').text('未配置（禁止 GCS 下载和复制）'));
         for (const row of nodeRows) readSelect.append($('<option>').val(row.id.input.val()).text(row.label.input.val() || row.id.input.val()));
         if (nodeRows.some(row=>row.id.input.val()===reader)) readSelect.val(reader);
+        const copier = copySelect.val() || current.copyparty_worker;
+        copySelect.empty().append($('<option>').val('').text('未配置'));
+        for (const row of nodeRows.filter(row=>row.library.prop('checked'))) copySelect.append($('<option>').val(row.id.input.val()).text(row.label.input.val() || row.id.input.val()));
+        if (nodeRows.some(row=>row.id.input.val()===copier)) copySelect.val(copier);
         defaultSelect.empty();
         for (const row of nodeRows) defaultSelect.append($('<option>').val(row.id.input.val()).text(row.label.input.val() || row.id.input.val() || '未命名节点'));
         if (!nodeRows.length) defaultSelect.append($('<option>').val('').text('不使用导入节点'));
@@ -40,7 +46,7 @@ export async function createSettingsPanel(context, onSaved) {
         row.token.input.attr({ autocomplete: 'new-password', placeholder: value.token_configured ? '已保存，留空保持不变' : '粘贴节点控制令牌' });
         row.url.input.attr('placeholder', 'https://node.example/video-import');
         row.id.input.attr('placeholder', 'primary');
-        row.library = $('<input type="checkbox">').prop('checked', Boolean(value.library_enabled));
+        row.library = $('<input type="checkbox">').prop('checked', Boolean(value.library_enabled)).on('change',updateDefaults);
         const libraryLabel = $('<label class="gcs-checkbox">').append(row.library, ' 在文件库显示该节点的共享目录（仅管理员）');
         const remove = $('<button type="button" class="menu_button gcs-subtle">').text('移除节点').on('click', () => { nodeRows.splice(nodeRows.indexOf(row), 1); row.element.remove(); updateDefaults(); });
         row.element = $('<div class="gcs-node-row">').append(row.id.label, row.label.label, row.url.label, row.token.label, libraryLabel, remove);
@@ -64,6 +70,7 @@ export async function createSettingsPanel(context, onSaved) {
         $('<h4>').text('导入节点'), $('<p class="gcs-muted">').text('添加已部署节点的接口和令牌；不添加节点也可上传本地视频。'),
         nodes, add, $('<label class="gcs-field">').append($('<span>').text('默认节点'), defaultSelect),
         $('<label class="gcs-field">').append($('<span>').text('GCS 下载与复制节点（需配置 Google 私有 API 地址）'),readSelect),
+        $('<label class="gcs-field">').append($('<span>').text('默认 copyparty 目标节点'),copySelect), copyVolume.label,
         $('<div class="gcs-actions">').append(save, test), testResult,
     );
     root.append(fields, status);
@@ -72,7 +79,7 @@ export async function createSettingsPanel(context, onSaved) {
         try {
             const keyFile = credential[0].files?.[0];
             if (keyFile?.size > 65536) throw new Error('请选择服务账号 JSON 密钥文件（最大 64 KiB）。');
-            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, gcs_read_worker: readSelect.val() || '', default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val(), library_enabled: row.library.prop('checked') })) };
+            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, gcs_read_worker: readSelect.val() || '', copyparty_worker: copySelect.val() || '', copyparty_volume: copyVolume.input.val(), default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val(), library_enabled: row.library.prop('checked') })) };
             const result = await fetch(`${API}/settings`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify(body) });
             const data = await result.json();
             if (!result.ok) throw new Error(data.error || '保存失败。');

@@ -61,7 +61,7 @@ async function completeDirectImport(entry, job) {
         }
         if (job.sync_video && entry.video?.url?.startsWith('gs://')) {
             saveDirectVideo(entry.user, job.sync_video);
-            const node = config.import_workers.find(item=>item.library_enabled);
+            const node = config.import_workers.find(item=>item.id===config.copyparty_worker && item.library_enabled);
             if (node) {
                 const roots = await worker(node.id, '/library/roots');
                 const url = new URL(job.sync_video.url);
@@ -70,7 +70,10 @@ async function completeDirectImport(entry, job) {
                     if (url.origin!==base.origin || !url.pathname.startsWith(prefix)) continue;
                     const file = await worker(node.id,'/library/file',{volume:root.id,path:decodeURIComponent(url.pathname.slice(prefix.length))});
                     const copies = fs.existsSync(copyFile)?JSON.parse(fs.readFileSync(copyFile,'utf8')):{};
-                    copies[fileCopyKey(entry.user,{...file,worker_id:node.id})]=entry.video.url;
+                    const original = await storage.stat(entry.video.url,entry.user);
+                    const copied = {...file,worker_id:node.id};
+                    copies[fileCopyKey(entry.user,copied)]=entry.video.url;
+                    copies[fileCopyKey(entry.user,original,'copyparty',{worker_id:node.id,volume:root.id})]=copied;
                     fs.writeFileSync(copyFile+'.tmp',JSON.stringify(copies),{mode:0o600});fs.renameSync(copyFile+'.tmp',copyFile);
                 }
             }

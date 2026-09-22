@@ -23,5 +23,7 @@
       "library_enabled": false
     }
   ],
-  "gcs_read_worker": ""
+  "gcs_read_worker": "",
+  "copyparty_worker": "",
+  "copyparty_volume": "imports"
 }

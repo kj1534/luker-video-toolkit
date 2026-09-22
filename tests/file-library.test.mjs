@@ -13,7 +13,7 @@ function fixture(t) {
     const gcs={storage:'gcs',url:'gs://private-bucket/videos/alice/report.pdf',title:'report.pdf',size:20000000,generation:'1'};
     const copyFile=path.join(dir,'copies.json');
     registerFileLibrary({get:(route,handler)=>routes.set('GET '+route,handler),post:(route,handler)=>routes.set('POST '+route,handler)}, {
-        config:{https_max_bytes:14000000,default_import_worker:'primary',gcs_read_worker:'reader',import_workers:[{id:'primary',library_enabled:true,label:'Primary'},{id:'reader',url:'https://reader.example/gcs-import'}]},
+        config:{https_max_bytes:14000000,default_import_worker:'primary',gcs_read_worker:'reader',copyparty_worker:'primary',copyparty_volume:'files',import_workers:[{id:'primary',library_enabled:true,label:'Primary'},{id:'reader',url:'https://reader.example/gcs-import'}]},
         storage:()=>({list:async()=>({items:[gcs],nextPageToken:''}),stat:async()=>gcs,access:async()=>({url:'https://storage.googleapis.com/signed-fixture',file:gcs}),remove:async()=>({ok:true})}),
         worker:async(id,route,body)=>{calls.push({id,route,body});return route==='/downloads'?{ticket:'a'.repeat(43),expires_seconds:300}:route==='/library/roots'?{volumes:[{id:'files',label:'Files'}]}:route==='/library/list'?{items:[shared]}:shared;},
         startJob:async(user,id,url,options)=>{jobs.push({user,id,url,options});return{id:'job'};},catalog:()=>[],copyFile,forgetCatalog:()=>{},
@@ -45,12 +45,12 @@ test('PDF, images, audio and text use native fileData MIME types; arbitrary file
     assert.equal(fileInfo('archive.zip').attachable,false);assert.throws(()=>createVideoAttachment('gs://private-bucket/archive.zip'));
 });
 
-test('GCS preview is forbidden and download returns only a reader ticket',async t=>{
+test('GCS preview and download both stage through reader into copyparty',async t=>{
  const f=fixture(t);
- assert.equal((await f.request('POST','/file-access',{file:f.gcs})).status,400);
- assert.equal(f.calls.length,0);
- const download=await f.request('POST','/file-access',{file:f.gcs,download:true});
- assert.equal(download.status,200);assert.ok(download.result.url.startsWith('https://reader.example/gcs-import/downloads/'));
- assert.equal(download.result.url.includes('storage.googleapis.com'),false);
- assert.equal(f.calls[0].id,'reader');assert.equal(f.calls[0].route,'/downloads');
+ for(const download of [false,true]) {
+  const result=await f.request('POST','/file-access',{file:f.gcs,download},true);
+  assert.equal(result.status,200);assert.ok(result.result.job);assert.equal(result.result.url,undefined);
+ }
+ for(const job of f.jobs){assert.equal(job.id,'reader');assert.equal(job.options.copyWorker,'primary');assert.equal(job.options.gcs_source,true);}
+ assert.equal((await f.request('POST','/file-access',{file:f.gcs,download:true})).status,403);
 });

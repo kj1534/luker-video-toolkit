@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createPrivateKey, randomUUID } from 'node:crypto';
 import { isAllowedVideoModel } from '../media.js';
 
-export const defaults = { upstream: '', models: [], bucket: '', port: 18779, prepare_ttl_ms: 120000, request_timeout_ms: 300000, max_upload_bytes: 2147483648, https_max_bytes: 14000000, direct_media_origins: [], default_import_worker: '', gcs_read_worker: '', import_workers: [] };
+export const defaults = { upstream: '', models: [], bucket: '', port: 18779, prepare_ttl_ms: 120000, request_timeout_ms: 300000, max_upload_bytes: 2147483648, https_max_bytes: 14000000, direct_media_origins: [], default_import_worker: '', gcs_read_worker: '', copyparty_worker: '', copyparty_volume: 'imports', import_workers: [] };
 export function isAdmin(request) { return request.user?.profile?.admin === true; }
 export function loadConfig(file) {
     if (!fs.existsSync(file)) return structuredClone(defaults);
@@ -19,7 +19,7 @@ export function allowsModel(config, model) {
 export function visibleSettings(config) {
     return { upstream: config.upstream, models: config.models, bucket: config.bucket,
         max_upload_bytes: config.max_upload_bytes, https_max_bytes: config.https_max_bytes,
-        direct_media_origins: config.direct_media_origins, default_import_worker: config.default_import_worker, gcs_read_worker: config.gcs_read_worker,
+        direct_media_origins: config.direct_media_origins, default_import_worker: config.default_import_worker, gcs_read_worker: config.gcs_read_worker, copyparty_worker: config.copyparty_worker, copyparty_volume: config.copyparty_volume,
         credential_configured: Boolean(config.credential_file && fs.existsSync(config.credential_file)),
         import_workers: config.import_workers.map(({ id, label, url, token_file, library_enabled }) => ({ id, label, url, library_enabled: Boolean(library_enabled), token_configured: Boolean(token_file && fs.existsSync(token_file)) })) };
 }
@@ -71,6 +71,10 @@ export function prepareSettings(input, previous, directory) {
         } else if (!worker.token_file || !fs.existsSync(worker.token_file)) throw new Error(`请填写节点 ${label} 的令牌。`);
         return worker;
     });
+    config.copyparty_worker = input.copyparty_worker || '';
+    config.copyparty_volume = input.copyparty_volume || 'imports';
+    if (!/^[a-zA-Z0-9_-]{1,48}$/.test(config.copyparty_volume)) throw new Error('copyparty 目标卷 ID 无效。');
+    if (config.copyparty_worker && !config.import_workers.some(item=>item.id===config.copyparty_worker && item.library_enabled)) throw new Error('默认 copyparty 目标需启用共享文件库。');
     config.gcs_read_worker = input.gcs_read_worker || '';
     if (config.gcs_read_worker && !ids.has(config.gcs_read_worker)) throw new Error('请选择有效的 GCS 读取节点。');
     config.default_import_worker = input.default_import_worker || '';

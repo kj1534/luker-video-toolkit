@@ -25,7 +25,7 @@ async function showVideoManager() {
     const importWorker = $('<select class="text_pole" aria-label="导入节点">');
     for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label));
     importWorker.val(config.default_import_worker);
-    const syncCopyparty = $('<input type="checkbox">');
+    const syncCopyparty = $('<input type="checkbox">').prop('checked',config.admin);
     const syncLabel = $('<label class="gcs-checkbox">').append(syncCopyparty, ' 同时保存到 copyparty（供播放和下载）').toggle(config.admin);
     const importButton = $('<button type="button" class="menu_button">').text('开始导入');
     const importStatus = $('<div role="status" class="gcs-import-status">');
@@ -71,8 +71,8 @@ async function showVideoManager() {
         segments.forEach((part,index)=>breadcrumbs.append($('<span>').text('/'),$('<button type="button" class="menu_button gcs-subtle">').text(part).on('click',()=>{directory=segments.slice(0,index+1).join('/');refresh();})));
     }
     async function previewFile(file) {
-        if (file.storage === 'gcs') { const copied = await copyFile(file); if (copied) await previewFile({...copied,...fileInfo(copied.title || copied.url)}); return; }
-        const data = await api('/file-access', {file});
+        const data = await accessibleFile(file);
+        file = {...data.file,...fileInfo(data.file.title || data.file.url)};
         const body = $('<div class="gcs-file-preview">').append($('<h3>').text(file.title));
         let media;
         if (file.type === 'video' || file.type === 'audio') media = $(`<${file.type} controls preload="metadata">`).attr('src',data.url);
@@ -90,8 +90,15 @@ async function showVideoManager() {
         await new Popup(body, POPUP_TYPE.TEXT, '', {wide:true,large:true,okButton:'关闭'}).show();
         if (file.type === 'video' || file.type === 'audio') {media[0].pause();media.removeAttr('src');media[0].load();}
     }
+    async function accessibleFile(file,download=false) {
+        const result = await api('/file-access',{file,download});
+        if (result.url) return result;
+        const copied = await completeTask(result);
+        if (!copied) throw new Error('尚未完成 copyparty 复制，请稍后重试。');
+        return api('/file-access',{file:copied,download});
+    }
     async function downloadFile(file) {
-        const data = await api('/file-access', {file,download:true});
+        const data = await accessibleFile(file,true);
         const link = $('<a>').attr({href:data.url,download:file.title,target:'_blank',rel:'noopener noreferrer'}).appendTo(panel);link[0].click();link.remove();
     }
     async function deleteFile(file) {
@@ -159,7 +166,7 @@ async function showVideoManager() {
             const date=video.expires?`到期 ${new Date(video.expires).toLocaleDateString()}`:new Date(video.created).toLocaleDateString();
             main.append($('<div class="gcs-video-meta">').append($('<span class="gcs-storage-label">').text(video.source_label || (video.storage==='gcs'?'GCS':'copyparty')), $('<span>').text(`${(video.size/1048576).toFixed(1)} MiB`),$('<span>').text(['video','audio'].includes(video.type)?formatDuration(video.duration_seconds):video.type?.toUpperCase()||'文件'),$('<span>').text(date)));
             const copyLink=action('复制地址',()=>copyUrl(video.url,copyLink));
-            const menu=$('<details class="gcs-file-menu">').append($('<summary>').text('管理'),$('<div class="gcs-file-menu-actions">').append(action('下载',()=>downloadFile(video)),copyLink,...(video.storage!=='gcs'||config.admin?[action(video.storage==='gcs'?'复制到 copyparty':'复制到 GCS',()=>copyFile(video))]:[])));
+            const menu=$('<details class="gcs-file-menu">').append($('<summary>').text('管理'),$('<div class="gcs-file-menu-actions">').append(action('下载',()=>downloadFile(video)).prop('disabled',video.storage==='gcs'&&!config.admin),copyLink,...(video.storage!=='gcs'||config.admin?[action(video.storage==='gcs'?'复制到 copyparty':'复制到 GCS',()=>copyFile(video))]:[])));
             if(video.storage==='gcs'||video.storage==='copyparty')menu.find('.gcs-file-menu-actions').append(action('删除',()=>deleteFile(video)));
             $('<article class="gcs-video-list-item">').append(main,$('<div class="gcs-actions">').append(action(video.storage==='gcs'?'复制后预览':'预览',()=>previewFile(video)).prop('disabled',video.storage==='gcs'&&!config.admin),attach,menu)).appendTo(list);
 
