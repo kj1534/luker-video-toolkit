@@ -13,7 +13,7 @@ def public_addresses(host):
     addresses = list(dict.fromkeys(x[4][0] for x in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)))
     if not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
         raise ValueError('Only public Internet destinations are allowed')
-    return addresses
+    return sorted(addresses, key=lambda address: ipaddress.ip_address(address).version)
 
 
 def validate_https(url):
@@ -48,12 +48,29 @@ class Response:
         self.connection.close()
 
 
-def open_source(url, method='GET', headers=None, timeout=45):
+def open_source(url, method='GET', headers=None, timeout=45, proxy=None, route_proxy=None):
+    seen=set()
     for _ in range(6):
+        if url in seen: raise ValueError('Redirect loop')
+        seen.add(url)
         u = validate_https(url)
-        c = PinnedHTTPS(u.hostname, 443, timeout=timeout, context=ssl.create_default_context())
+        selected=route_proxy(url) if route_proxy else proxy
+        if selected:
+            p=urllib.parse.urlsplit(selected)
+            if p.scheme!='http' or p.username or p.password:raise ValueError('Use a trusted HTTP proxy endpoint')
+            # CONNECT an already validated public IP; TLS continues to verify the original host.
+            address=public_addresses(u.hostname)[0]
+            c=http.client.HTTPSConnection(u.hostname,443,timeout=timeout,context=ssl.create_default_context())
+            c._create_connection=lambda *args, **kwargs: socket.create_connection((p.hostname,p.port or 80),timeout)
+            c.set_tunnel(address,443)
+            original=c._tunnel
+            def tunnel():
+                original();c._tunnel_host=u.hostname
+            c._tunnel=tunnel
+        else:
+            c = PinnedHTTPS(u.hostname, 443, timeout=timeout, context=ssl.create_default_context())
         try:
-            c.request(method, urllib.parse.urlunsplit(('', '', u.path or '/', u.query, '')), headers={'Accept-Encoding': 'identity', **(headers or {})})
+            c.request(method, urllib.parse.urlunsplit(('', '', u.path or '/', u.query, '')), headers={'User-Agent':'FileLibrary/1.0','Host':u.hostname,'Accept-Encoding': 'identity', **(headers or {})})
             r = c.getresponse()
         except BaseException:
             c.close()
@@ -81,7 +98,15 @@ class ConnectHandler(http.server.BaseHTTPRequestHandler):
             u = validate_https('https://' + self.path)
             if u.path or u.query:
                 raise ValueError('Invalid CONNECT target')
-            upstream = socket.create_connection((public_addresses(u.hostname)[0], 443), timeout=30)
+            address=public_addresses(u.hostname)[0]
+            proxy=getattr(self,'proxy_url',None)
+            if proxy:
+                p=urllib.parse.urlsplit(proxy)
+                if p.scheme!='http' or p.username or p.password:raise ValueError('Invalid proxy')
+                connection=http.client.HTTPConnection(p.hostname,p.port or 80,timeout=30)
+                connection.set_tunnel(address,443);connection.connect();upstream=connection.sock
+            else:
+                upstream = socket.create_connection((address, 443), timeout=30)
         except Exception:
             self.send_error(403, 'Destination denied or unavailable')
             return
@@ -107,8 +132,9 @@ class ConnectHandler(http.server.BaseHTTPRequestHandler):
     do_POST = do_GET
 
 
-def start_proxy():
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), ConnectHandler)
+def start_proxy(upstream=None):
+    handler=type('RoutedConnectHandler',(ConnectHandler,),{'proxy_url':upstream})
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f'http://127.0.0.1:{server.server_port}'

@@ -7,7 +7,7 @@
   "port": 18779,
   "prepare_ttl_ms": 120000,
   "request_timeout_ms": 300000,
-  "credential_file": "/path/to/luker/config/gcs-video/uploader.json",
+  "credential_file": "/var/lib/file-library/credentials/uploader.json",
   "max_upload_bytes": 2147483648,
   "https_max_bytes": 14000000,
   "direct_media_origins": [
@@ -19,11 +19,14 @@
       "id": "primary",
       "label": "Primary video node",
       "url": "https://worker.example/video-import",
-      "token_file": "/path/to/luker/config/gcs-video/primary.token",
+      "token_file": "/var/lib/file-library/credentials/primary.token",
       "library_enabled": false
     }
   ],
   "gcs_read_worker": "",
   "copyparty_worker": "",
-  "copyparty_volume": "imports"
+  "copyparty_volume": "imports",
+  "public_url": "https://files.example/library/",
+  "app_port": 3930,
+  "retention_days": 7
 }

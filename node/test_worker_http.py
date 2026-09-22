@@ -32,6 +32,6 @@ class WorkerHttpTest(unittest.TestCase):
                 self.assertEqual(call('/jobs/'+ident+'/upload',{'session':'https://example.org/upload'})[0],400)
                 session='https://storage.googleapis.com/upload/storage/v1/b/test-videos/o?upload_id=test'
                 self.assertEqual(call('/jobs/'+ident+'/upload',{'session':session})[0],202)
-                self.assertEqual(call('/jobs/'+ident+'/upload',{'session':session})[0],400)
+                self.assertEqual(call('/jobs/'+ident+'/upload',{'session':session})[0],202) # Same session is acknowledged without starting a second upload.
                 self.assertEqual(submit.call_count,2)
         finally:server.shutdown();server.server_close();thread.join()

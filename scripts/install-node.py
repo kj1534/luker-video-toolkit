@@ -39,7 +39,7 @@ def install(config_path, source):
         raise ValueError('Invalid release version')
     backup = prefix / 'previous'
     backup.mkdir(exist_ok=True)
-    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'library.py', 'gcs_read.py', 'local_upload.py', 'naming.py', 'requirements.lock.txt']
+    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'library.py', 'gcs_read.py', 'local_upload.py', 'naming.py', 'control.py', 'requirements.lock.txt']
     for name in names:
         if (prefix / name).exists():
             shutil.copy2(prefix / name, backup / name)
@@ -51,6 +51,7 @@ def install(config_path, source):
         raise ValueError('yt_dlp must point to install_directory/venv/bin/yt-dlp')
     subprocess.run([str(venv / 'bin/pip'), 'install', '--disable-pip-version-check', '-r', str(prefix / 'requirements.lock.txt')], check=True)
     download.mkdir(parents=True, exist_ok=True)
+    shutil.chown(download.parent,user=user,group=user)
     shutil.chown(download, user=user, group=user)
     download.chmod(0o700)
     config_path.chmod(0o640); shutil.chown(config_path, user='root', group=user)
@@ -79,7 +80,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths={download}
+ReadWritePaths={download.parent}
 UMask=0077
 MemoryHigh={limits['memory_high']}
 MemoryMax={limits['memory_max']}

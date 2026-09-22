@@ -1,5 +1,6 @@
 """Anonymous Iwara/Bilibili/YouTube downloads with per-site proxy routing."""
 import json
+import fcntl
 import mimetypes
 import copyparty_store
 import gcs_read
@@ -14,7 +15,7 @@ import signal
 import subprocess
 import tempfile
 import time
-from source_fetch import validate_https, open_source
+from source_fetch import validate_https, open_source, start_proxy
 
 ALLOWED = {
     'iwara.tv', 'www.iwara.tv',
@@ -38,6 +39,7 @@ def parser_proxy(config, fallback, site):
     per_site = config.get('parser_proxies', {})
     if isinstance(per_site, dict) and per_site.get(site):
         return per_site[site]
+    if site in config.get('required_proxy_sites',[]) and not config.get('parser_proxy'):raise ValueError('该站点必须使用已配置的解析出口。')
     return config.get('parser_proxy') or fallback
 
 
@@ -76,18 +78,19 @@ def finish_file(job, file, title, mime, config):
     title = naming.filename(title,file.suffix)
     metadata = {'filename': title, 'size': size, 'mime_type': mime, 'duration_seconds': duration}
     if config.get('_source_id'):metadata['source_id']=config['_source_id']
-    job.update(total=size, done=size, metadata=metadata)
+    if job.get('_cancelled'):raise ValueError('任务已取消。')
+    job.update(total=size, done=size, metadata=metadata, _file=str(file))
     small = config['small_video']
     if config.get('_destination') == 'copyparty' or (config.get('_destination', 'auto') == 'auto' and small['enabled'] and size <= small['max_bytes']):
         job['status'] = 'publishing'
-        video = copyparty_store.publish(file, metadata, small['copyparty'])
+        video = copyparty_store.publish(file, metadata, small['copyparty'], lambda:job.get('_cancelled',False))
         job.update(status='complete', video=video, finished=time.time())
         cleanup(job)
     else:
         if config.get('_sync_copyparty'):
             job['status'] = 'publishing'
             try:
-                job['sync_video'] = copyparty_store.publish(file, metadata, small['copyparty'])
+                job['sync_video'] = copyparty_store.publish(file, metadata, small['copyparty'], lambda:job.get('_cancelled',False))
             except Exception:
                 job['warning'] = 'copyparty 同步失败，GCS 上传将继续；完成后可重试复制。'
         job.update(status='ready', ready_at=time.time(), _file=str(file))
@@ -105,7 +108,7 @@ def direct_download(job, url, directory, config):
         if mime in ('application/octet-stream', ''):
             mime = types.get(mime) or mimetypes.guess_type(title)[0] or 'application/octet-stream'
         if mime == 'text/html' and not config.get('_filename'):
-            raise ValueError('播放页目前仅支持 Iwara 和 B站；其他来源请提供文件直链。')
+            raise ValueError('播放页支持 Iwara、B站和 YouTube；其他来源请提供文件直链。')
         total = int(response.headers.get('Content-Length', '0'))
         if total > config['max_bytes']:
             raise ValueError('视频超过 2 GiB 上限。')
@@ -115,6 +118,7 @@ def direct_download(job, url, directory, config):
         with file.open('wb') as target:
             done = 0
             while True:
+                if job.get('_cancelled'):raise ValueError('任务已取消。')
                 block = response.read(1024 * 1024)
                 if not block:
                     break
@@ -133,22 +137,31 @@ def download(job, url, config, proxy):
     directory = tempfile.mkdtemp(prefix='gcs-web-', dir=config['download_directory'])
     job['_directory'] = directory
     process = None
+    lease = None
+    guarded_proxy = None
     try:
+        if config.get('egress_lock_file'):
+            lease=open(config['egress_lock_file'],'a');fcntl.flock(lease,fcntl.LOCK_SH)
+        if job.get('_cancelled'):raise ValueError('任务已取消。')
         if shutil.disk_usage(directory).free < config['max_bytes'] * 3:
             raise ValueError('下载节点磁盘空间不足，请稍后再试。')
+        # Resolve official short links and ordinary HTTPS redirects before classifying.
+        # GCS signed reads retain their private endpoint and never enter the public resolver.
+        host=validate_https(url).hostname
+        if not config.get('_gcs_source') and (host not in ALLOWED or host in ('b23.tv','youtu.be')):
+            route=lambda target:parser_proxy(config,proxy,source_site(target))
+            with open_source(url,method='GET',route_proxy=route) as response:
+                url=response.url
         if validate_https(url).hostname not in ALLOWED:
-            job['kind'] = 'direct'
-            direct_download(job, url, directory, config)
-            return
-        job['kind'] = 'webpage'
+            job['kind']='direct';direct_download(job,url,directory,config);return
+        job['kind']='webpage'
         page_url(url)
-        if validate_https(url).hostname == 'b23.tv':
-            with open_source(url, method='HEAD') as response:
-                url = page_url(response.url)
         url = url.replace('https://m.bilibili.com/', 'https://www.bilibili.com/')
         url = re.sub(r'^(https://(?:www\.)?iwara\.tv)/[a-z]{2}/video/', r'\1/video/', url)
         site = source_site(url)
         parse_proxy = parser_proxy(config, proxy, site)
+        if parse_proxy!=proxy:
+            guarded_proxy,parse_proxy=start_proxy(parse_proxy)
         extract = [config['yt_dlp'], '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
                    '--no-warnings', '--socket-timeout', '30', '--retries', '2', '--fragment-retries', '2',
                    '--proxy', parse_proxy, '--use-extractors', 'Iwara$,BiliBili$,Youtube$',
@@ -174,6 +187,7 @@ def download(job, url, config, proxy):
             deadline = time.monotonic() + config['download_timeout_seconds']
             while process.poll() is None:
                 time.sleep(1)
+                if job.get('_cancelled'):raise ValueError('任务已取消。')
                 size = sum(p.stat().st_size for p in pathlib.Path(directory).iterdir() if p.is_file())
                 job['done'] = size
                 if time.monotonic() > deadline or size > config['max_bytes'] * 2 + 16 * 1024 * 1024 or shutil.disk_usage(directory).free < 256 * 1024 * 1024:
@@ -192,9 +206,11 @@ def download(job, url, config, proxy):
         if process and process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-        job.update(status='failed', error=str(error) if isinstance(error, ValueError) else '视频下载或合并失败。', finished=time.time())
+        job.update(status='cancelled' if job.get('_cancelled') else 'failed', error=str(error) if isinstance(error, ValueError) else '节点传输失败（'+type(error).__name__+(' '+str(error.code) if hasattr(error,'code') else '')+'）。', finished=time.time())
         cleanup(job)
     finally:
+        if guarded_proxy:guarded_proxy.shutdown();guarded_proxy.server_close()
+        if lease:lease.close()
         if process and process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()

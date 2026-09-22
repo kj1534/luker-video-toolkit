@@ -1,5 +1,4 @@
-const API = '/api/plugins/gcs-video';
-export async function createSettingsPanel(context, onSaved) {
+export async function createSettingsPanel(context, onSaved, API = '/library/api') {
     const root = $('<form class="gcs-settings">');
     const status = $('<p role="status" class="gcs-status">');
     const response = await fetch(`${API}/settings`, { headers: context().getRequestHeaders() });
@@ -85,7 +84,7 @@ export async function createSettingsPanel(context, onSaved) {
             if (!result.ok) throw new Error(data.error || '保存失败。');
             credential.val(''); credentialState.text('已保存密钥；不选择新文件则保持不变。');
             for (const row of nodeRows) row.token.input.val('').attr('placeholder', '已保存，留空保持不变');
-            await onSaved(); status.text('已保存并生效，无需重启 Luker。');
+            await onSaved(); status.text('已保存并生效，应用配置已更新。');
         } catch (error) { status.text(error.message); }
         finally { fields.prop('disabled', false); }
     });

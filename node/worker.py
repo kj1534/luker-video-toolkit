@@ -13,6 +13,7 @@ import urllib.request
 import uuid
 import argparse
 import copy
+import control
 import gcs_read
 import library
 import local_upload
@@ -68,7 +69,8 @@ def request_upload(session, data, content_range):
 
 def upload_download(job_id, session):
     job = JOBS[job_id]
-    job.update(status='running', done=0)
+    job.update(status='running', done=0, _session=session)
+    persist_jobs()
     try:
         total = job['total']
         done = 0
@@ -84,6 +86,7 @@ def upload_download(job_id, session):
                         raise ValueError('Invalid upload offset')
                     file.seek(done)
                     while done < total:
+                        if job.get('_cancelled'):raise ValueError('Task cancelled')
                         data = file.read(min(CHUNK, total - done))
                         if not data:
                             raise ValueError('Unexpected EOF')
@@ -98,12 +101,12 @@ def upload_download(job_id, session):
                         failures = 0
                 except Exception:
                     failures += 1
-                    if failures > 3:
+                    if failures > 3 or job.get('_cancelled'):
                         raise
                     time.sleep(failures * 2)
         job.update(status='complete', done=total)
     except Exception:
-        job.update(status='failed', error='上传 GCS 失败，请重新导入。')
+        job.update(status='cancelled' if job.get('_cancelled') else 'failed', error='上传已取消或失败，请重新导入。')
     finally:
         job['finished'] = time.time()
         web_import.cleanup(job)
@@ -117,7 +120,7 @@ def new_job():
         if sum(j['status'] in ('queued', 'receiving', 'downloading', 'publishing', 'ready', 'running') for j in JOBS.values()) >= 8:
             raise ValueError('Import queue is full')
         job_id = uuid.uuid4().hex
-        JOBS[job_id] = {'id': job_id, 'status': 'queued', 'done': 0, 'total': 0}
+        JOBS[job_id] = {'created':time.time(),'id': job_id, 'status': 'queued', 'done': 0, 'total': 0}
         return job_id
 
 
@@ -201,7 +204,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/library/roots':
             return self.reply(200, {'volumes':library.roots(CONFIG)})
         if self.path == '/healthz':
-            return self.reply(200, {'ok': True})
+            return self.reply(200, {'ok': True,'version':'1.0.0','active':sum(j['status'] not in ('complete','failed','cancelled','expired') for j in JOBS.values()),'capabilities':control.visible(CONFIG)})
+        if self.path=='/settings':return self.reply(200,control.visible(CONFIG))
+        if self.path.startswith('/egress/'):
+            try:return self.reply(200,control.selector(CONFIG,self.path.split('/')[-1]))
+            except Exception:return self.reply(400,{'error':'出口选择器不可用。'})
         if self.path.startswith('/jobs/'):
             job = JOBS.get(self.path[6:])
             return self.reply(200 if job else 404, {k: v for k, v in job.items() if not k.startswith('_')} if job else {'error': 'Unknown job'})
@@ -215,12 +222,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= 16384:
                 raise ValueError('Invalid request size')
             body = json.loads(self.rfile.read(length))
+            if self.path=='/settings':return self.reply(200,control.save(CONFIG,body,JOBS))
+            if self.path.startswith('/egress/'):return self.reply(200,control.selector(CONFIG,self.path.split('/')[-1],body.get('name')))
+            if self.path.startswith('/jobs/') and self.path.endswith('/cancel'):
+                job=JOBS.get(self.path.split('/')[2])
+                if not job:raise ValueError('Unknown job')
+                job['_cancelled']=True
+                if job['status'] in ('queued','ready','receiving'):
+                    job.update(status='cancelled',finished=time.time());web_import.cleanup(job)
+                persist_jobs();return self.reply(200,{'ok':True})
+            if self.path.startswith('/jobs/') and self.path.endswith('/retry'):
+                old=JOBS.get(self.path.split('/')[2])
+                if not old or old['status'] not in ('failed','cancelled','expired') or not old.get('_source'):raise ValueError('Cannot retry')
+                job_id=new_job();job=JOBS[job_id];job.update(_source=old['_source'],_settings=old['_settings'])
+                persist_jobs();POOL.submit(web_import.download,job,job['_source'],job['_settings'],WEB_PROXY)
+                return self.reply(202,{'id':job_id})
             if self.path == '/local-uploads':
                 job_id=new_job();job=JOBS[job_id]
                 try:
                     result=local_upload.create(job,body,CONFIG);job['_upload_lock']=threading.Lock()
                 except Exception:
                     job.update(status='failed',finished=time.time());web_import.cleanup(job);raise
+                persist_jobs()
                 return self.reply(201,result)
             if self.path.startswith('/local-uploads/') and self.path.endswith('/finish'):
                 job=JOBS.get(self.path.split('/')[2])
@@ -233,6 +256,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         try:web_import.finish_file(job,pathlib.Path(job['_file']),job['_filename'],job['_mime'],job['_upload_config'])
                         except Exception:
                             job.update(status='failed',error='文件保存失败，请重新上传。',finished=time.time());web_import.cleanup(job)
+                    persist_jobs()
                     POOL.submit(publish)
                 return self.reply(202,{'id':job['id']})
             if self.path == '/library/list':
@@ -262,6 +286,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if destination == 'copyparty' and body.get('volume'):
                     settings['small_video']['copyparty'] = library.volume(CONFIG, body['volume'])
                 job_id = new_job()
+                JOBS[job_id].update(_source=source,_settings=settings)
+                persist_jobs()
                 POOL.submit(web_import.download, JOBS[job_id], source, settings, WEB_PROXY)
                 return self.reply(202, {'id': job_id})
             parts = self.path.split('/')
@@ -270,15 +296,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 job_id = parts[2]
                 with LOCK:
                     job = JOBS.get(job_id)
+                    if job and job.get('_session')==session and job['status'] in ('queued','running','complete'):return self.reply(202,{'id':job_id})
                     if not job or job['status'] != 'ready':
                         raise ValueError('Download not ready or upload already started')
-                    job['status'] = 'queued'
+                    job.update(status='queued',_session=session)
+                    persist_jobs()
                 POOL.submit(upload_download, job_id, session)
                 return self.reply(202, {'id': job_id})
             self.reply(404, {'error': 'Not found'})
         except Exception:
             self.reply(400, {'error': 'Invalid or inaccessible source/upload target'})
 
+
+PERSIST_LOCK=threading.Lock()
+def persist_jobs():
+    if not CONFIG.get('download_directory'):return
+    file=pathlib.Path(CONFIG['download_directory']).parent/'jobs.json'
+    with PERSIST_LOCK:
+        snapshot={key:{k:v for k,v in job.copy().items() if k!='_upload_lock'} for key,job in list(JOBS.items())}
+        control.atomic(file,snapshot)
+
+def snapshot_loop():
+    while True:
+        time.sleep(1)
+        try:persist_jobs()
+        except Exception:pass
+
+def restore_jobs():
+    file=pathlib.Path(CONFIG['download_directory']).parent/'jobs.json'
+    if not file.exists():return
+    JOBS.update(json.loads(file.read_text()))
+    for job in JOBS.values():
+        if job['status'] in ('complete','failed','cancelled','expired'):continue
+        # Browser tickets intentionally expire after a node restart.
+        if job['status']=='receiving':
+            job.update(status='expired',error='节点重启，上传票据已过期；请重新选择本地文件。',finished=time.time());web_import.cleanup(job)
+        elif job.get('_session') and pathlib.Path(job.get('_file','/nonexistent')).is_file():
+            POOL.submit(upload_download,job['id'],job['_session'])
+        elif job['status']=='ready' and pathlib.Path(job.get('_file','/nonexistent')).is_file():pass
+        elif job.get('_upload_config') and pathlib.Path(job.get('_file','/nonexistent')).is_file():
+            def finish(j=job):
+                try:web_import.finish_file(j,pathlib.Path(j['_file']),j['_filename'],j['_mime'],j['_upload_config'])
+                except Exception:j.update(status='failed',error='重启恢复保存失败。',finished=time.time());web_import.cleanup(j)
+            POOL.submit(finish)
+        elif job.get('_source'):
+            web_import.cleanup(job);POOL.submit(web_import.download,job,job['_source'],job['_settings'],WEB_PROXY)
+        else:
+            job.update(status='expired',error='节点重启后此本地任务不能恢复，请重新上传。',finished=time.time());web_import.cleanup(job)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Video Toolkit import node')
@@ -287,8 +351,9 @@ if __name__ == '__main__':
     CONFIG = json.loads(pathlib.Path(args.config).read_text())
     CONFIG['token'] = pathlib.Path(CONFIG['token_file']).read_text().strip()
     pathlib.Path(CONFIG['download_directory']).mkdir(parents=True, exist_ok=True)
-    for old in pathlib.Path(CONFIG['download_directory']).glob('gcs-web-*'):
-        web_import.cleanup({'_directory': str(old)})
+    control.load(CONFIG)
     _, WEB_PROXY = start_proxy()
+    restore_jobs()
+    threading.Thread(target=snapshot_loop,daemon=True).start()
     threading.Thread(target=reap_downloads, daemon=True).start()
     http.server.ThreadingHTTPServer(('127.0.0.1', CONFIG['port']), Handler).serve_forever()

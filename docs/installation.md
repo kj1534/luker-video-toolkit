@@ -1,25 +1,34 @@
+# Installation and upgrade to 1.0
+
+The independent application owns storage settings and task state. Luker installs the frontend and server components from the same repository using its official extension and plugin controls; these are one connector release with two host-required installation locations.
+
+## Independent service
+
+1. Extract the application release, install Node 24+ and run `npm ci --omit=dev --ignore-scripts`.
+2. Create a dedicated unprivileged service user and a private state directory (700; files 600). Copy `server/config.example.json` to this directory and supply only a bucket-restricted uploader credential. Add `public_url`, `app_port` and `retention_days` as described in [operations](independent-app.md).
+3. Initialize an account with `node scripts/create-account.mjs --config /private/config.json --handle owner --admin`. It writes a generated first-login password to a private file and does not print it. Never check this file into Git.
+4. Run `sudo python3 scripts/install-app.py --source /opt/file-library --config /private/config.json --node /absolute/node --user file-library` after setting state ownership to the service user. Add the unchanged application URL path to your existing HTTPS reverse proxy with a 256 KiB request limit. Do not open public origin ports to bypass a Tunnel.
+5. Sign in, configure/test nodes and storage, create a user-scoped plugin token, then paste it into Luker's **Connect independent file library** dialog. The host operator configures the trusted `service_url` in `config/gcs-video/connection.json`; ordinary users cannot select arbitrary control servers.
+
+## Upgrade from 0.7
+
+Before switching the connector, export the old private configuration, its referenced uploader/node token files, `direct-videos.json`, and `file-copies.json`. Copy them into the independent state directory and update only local credential paths. Create one account per actual old owner, preserving each original handle and GCS prefix. In particular, bind `default-user` exclusively to its original owner. Do not combine administrators into one account.
+
+Migrate while the previous task queue is idle. Existing bytes, object names, GS URIs, direct references and copy keys remain unchanged. Back up the old frontend/backend and node versions. Start the independent service and verify user/source/index counts before switching Luker. Remove active legacy credential copies from the connector host after verification, retaining the private recovery archive. See [recovery details](independent-app.md).
+
+## Worker installation reference
+
 # 安装与配置
 
-## 安装 Luker 插件
+## 安装 Luker 连接器
 
-同一个仓库同时提供前端扩展和服务端插件，使用 Luker 的两个官方管理入口安装：
+使用 Luker 官方的服务端插件和前端扩展入口安装同一个仓库：`https://github.com/kj1534/luker-video-toolkit`。两侧保持同一版本，启用服务端插件后按 Luker 提示重启。宿主配置 `config/gcs-video/connection.json` 的 `service_url`，用户通过附件菜单的“连接独立文件库”绑定自己的专用令牌。
 
-1. **管理面板 → 服务端插件 → 安装**，仓库 URL：`https://github.com/kj1534/luker-video-toolkit`。
-2. **扩展 → 安装扩展**，使用同一个仓库 URL。需安装到运行该服务端插件的 Luker 实例。
-3. 确保 Luker `config.yaml` 中 `enableServerPlugins: true`。
-4. 重启 Luker 并刷新浏览器，打开附件菜单中的 **文件库：上传与管理 → 设置**（仅管理员可见）。
-5. 在“模型连接”填写与 Luker Gemini 连接一致的 HTTPS 接口地址。可用模型每行填写一个 ID，或留空允许该连接的所有模型；实际模型需支持视频，连接身份需有视频读取权限。
-6. 在“视频存储”填写私有 GCS 桶名称、选择专用服务账号 JSON；如需直接附加 HTTPS 视频，填写允许的来源域名。
-7. 如需链接导入，在“导入节点”中填写节点 ID、名称、HTTPS 控制接口和令牌，选择默认节点。
-8. 点击 **保存设置**，再点击 **检测已保存的连接** 检查 GCS 和节点。保存即时生效，无需重启；已有导入进行中时，请等任务完成再保存。
-
-无需手动编辑 Luker 插件配置文件。设置自动写入 Luker 工作目录 `config/gcs-video/`；密钥和令牌分开存放，设置界面只显示是否已保存，不回显密钥。更换凭据时选择新文件或填写新令牌，留空则保留当前值。原有配置会自动载入界面。
-
-升级时，在官方管理入口分别更新前端扩展与服务端插件，再按提示重启服务。**不要直接改克隆目录内的源码或存放运行配置。** 两侧建议保持相同版本。
+全部存储、节点和凭据配置在独立应用的设置页维护。连接器不再持有 GCS 上传凭据和节点控制令牌。
 
 ## 配置 GCS
 
-建立一个私有桶，配置上传来源 CORS 和生命周期。专用上传账号只需要目标桶的 `roles/storage.objectCreator`、`roles/storage.objectViewer`；模型使用的 Vertex 身份另需该桶的 objectViewer。在 Luker 设置页选择该账号的 JSON 密钥文件。
+建立一个私有桶，配置上传来源 CORS 和生命周期。专用上传账号只需要目标桶的 `roles/storage.objectCreator`、`roles/storage.objectViewer` 和对象删除权限；模型使用的 Vertex 身份另需该桶的 objectViewer。在独立应用设置页选择该账号的 JSON 密钥文件。
 
 建议按用途设置对象保留天数；如果希望到期清理不继续产生软删除保留费用，需同时检查桶的 soft-delete policy。浏览器直接上传的视频字节不经过 Luker 主机。
 
@@ -28,17 +37,17 @@
 要求 Linux、Python 3.11+、FFmpeg、python3-venv。每台节点独立安装：
 
 1. 从 [Releases](https://github.com/kj1534/luker-video-toolkit/releases) 下载对应版本的 `video-toolkit-node-<version>.tar.gz` 和 `SHA256SUMS`，校验后解压。
-2. 将 `node/config.example.json` 复制为 `/etc/video-toolkit/node.json`，按实际路径修改。生成强随机控制令牌，存入 `token_file`；将同一令牌填写到 Luker 设置页面对应节点的“控制令牌”。
+2. 将 `node/config.example.json` 复制为 `/etc/video-toolkit/node.json`，按实际路径修改。生成强随机控制令牌，存入 `token_file`；将同一令牌填写到 独立应用设置页面对应节点的“控制令牌”。
 
    `parser_proxies` 可分别指定 Iwara、B站和 YouTube 的本地 HTTP/SOCKS
    代理。Iwara与B站仅在解析阶段使用对应代理，媒体地址由处理节点直接下载；
    YouTube 的解析与下载使用同一个代理，以避免签名媒体地址因出口变化而失效。
 3. 若启用小视频直链，配置 copyparty 专用读写账号、卷地址、密码文件和保留时间。专用账号只授权临时导入卷，不需要管理所有文件。示例卷：
-   `/srv/video-imports:/imports:g:rw,video-import:c,e2d:c,fk=16:c,lifetime=259200:c,rm_partial`
+   `/srv/video-imports:/imports:g:rw,video-import:c,e2d:c,fk=16:c,lifetime=604800:c,rm_partial`
    `g` 允许持有 filekey 的外部读取；不要给匿名用户列目录权限。
 4. 执行 `sudo python3 scripts/install-node.py --config /etc/video-toolkit/node.json`。安装器读取配置中的用户、目录和资源限制，安装锁定依赖，启用 systemd 服务。
 5. 参考 [Nginx 配置示例](node-nginx.example.conf)，在现有 HTTPS 站点内代理控制接口。Worker 只监听 loopback；控制接口要求 Bearer 令牌，copyparty 文件使用独立 filekey。
-6. 在 Luker **文件库 → 设置 → 导入节点** 中添加节点 ID、名称、控制 API URL 和同一令牌；“允许附加的 HTTPS 视频来源”中加入 copyparty 公开文件 URL 的 origin。
+6. 在独立应用 **文件库 → 设置 → 导入节点** 中添加节点 ID、名称、控制 API URL 和同一令牌；“允许附加的 HTTPS 视频来源”中加入 copyparty 公开文件 URL 的 origin。
 
 升级节点：下载新版本、验证 checksum、解压，再运行同一个安装命令。配置和凭据不覆盖；先前程序保存在安装目录 `previous/`。升级/重启会丢失在途任务，不要在有重要传输时升级。实例重建可用相同配置重新安装。
 

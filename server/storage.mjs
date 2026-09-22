@@ -61,6 +61,15 @@ export function createStorage(config, fetchImpl) {
     }
     return {
         stat,
+        async retention(days) {
+            const url=`https://storage.googleapis.com/storage/v1/b/${config.bucket}`;
+            const current=await authorized(url);if(!current.ok)throw Error('Cannot read bucket lifecycle');const data=await current.json();
+            if(!days)return data.lifecycle;
+            const rules=(data.lifecycle?.rule||[]).filter(r=>!(r.action?.type==='Delete'&&Object.keys(r.condition||{}).length===1&&r.condition.age!==undefined));
+            rules.push({action:{type:'Delete'},condition:{age:days}});
+            const response=await authorized(url+'?ifMetagenerationMatch='+data.metageneration,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({lifecycle:{rule:rules}})});
+            if(!response.ok)throw Error('Cannot apply bucket lifecycle');return (await response.json()).lifecycle;
+        },
         async access(uri, handle, download = false) {
             const item = await stat(uri, handle);
             return { ...signDownload(credential, config.bucket, ownedName(uri, handle), { download, title: item.title, mime: item.mime_type, generation: item.generation }), file: item };

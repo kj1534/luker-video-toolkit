@@ -34,7 +34,7 @@ def request(config, relative='', method='GET', query=''):
     password = pathlib.Path(config['password_file']).read_text().strip()
     auth = base64.b64encode((config['username'] + ':' + password).encode()).decode()
     url = config['api_url'].rstrip('/') + '/' + urllib.parse.quote(relative, safe='/') + query
-    req = urllib.request.Request(url, method=method, headers={'Authorization':'Basic '+auth, 'Accept':'application/json'})
+    req = urllib.request.Request(url, method=method, headers={'Authorization':'Basic '+auth,'User-Agent':'FileLibrary/1.0', 'Accept':'application/json'})
     return HTTP.open(req, timeout=30)
 
 def list_files(config, identifier, directory=''):
