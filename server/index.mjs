@@ -60,7 +60,8 @@ async function completeDirectImport(entry, job) {
     if (job.status !== 'complete' || !job.video) return false;
     if (!entry.submitted) {
         // Unknown formats remain manageable files, but cannot be sent as model attachments.
-        if (fileInfo(job.video.url).attachable) validateVideo(job.video, config);
+        // Explicit storage copies may exceed the HTTP attachment limit; attach promotes them to GCS.
+        if (!entry.originGcs && fileInfo(job.video.url).attachable) validateVideo(job.video, config);
         saveDirectVideo(entry.user, job.video);
         entry.video = job.video;
         entry.submitted = true;
