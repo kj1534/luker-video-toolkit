@@ -18,7 +18,11 @@ async function showVideoManager() {
     const progress = $('<progress max="100" value="0" aria-label="上传进度">').hide();
     const status = $('<div role="status" class="gcs-status">');
     const uploadMode = $('<select class="text_pole" aria-label="上传保存方式">');
+    function refreshUploadModes() {
+        uploadMode.empty();
     for (const [id,label] of [['auto','自动：小文件仅 copyparty，大文件两边各一份'],['copyparty','仅 copyparty：用于播放、下载'],['both','copyparty + GCS：两边各保存一份'],['gcs','仅 GCS：浏览器直接上传 Google']]) if(config.local_upload_available || id==='gcs') uploadMode.append($('<option>').val(id).text(label));
+    }
+    refreshUploadModes();
     const uploadPlan = $('<p class="gcs-muted">');
     function describeUpload() {
         const mode=uploadMode.val(),size=selectedFile?.size;
@@ -45,7 +49,7 @@ async function showVideoManager() {
     let controller;
     let active = false;
     let selectedFile;
-    function loadSaved() { try { return JSON.parse(sessionStorage.getItem(storeKey)); } catch { return null; } }
+    function loadSaved() { try { const saved=JSON.parse(sessionStorage.getItem(storeKey));return saved?{...saved,mode:saved.mode || 'gcs'}:null; } catch { return null; } }
     describeUpload();
     if (loadSaved()) {uploadMode.val(loadSaved().mode || 'gcs');describeUpload();}
     if (loadSaved()) status.text('有未完成的上传：重新选择相同文件，然后点击“上传 / 继续”。');
@@ -363,7 +367,7 @@ async function showVideoManager() {
             config = await (await fetch(`${API}/config`, { headers: context().getRequestHeaders() })).json();
             importWorker.empty(); for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label));
             importWorker.val(config.default_import_worker); importButton.prop('disabled', !config.import_workers.length);
-            upload.prop('disabled', !config.configured); await loadSources(); await refresh();
+            upload.prop('disabled', !config.configured);refreshUploadModes();describeUpload();await loadSources(); await refresh();
         }).then(form => settingsPanel.empty().append(form)).catch(error => settingsPanel.text(error.message));
     }
     selectTab(config.configured ? 'library' : config.admin ? 'settings' : 'library');
