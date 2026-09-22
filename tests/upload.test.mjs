@@ -13,7 +13,9 @@ test('uploads are unique and confined to the authenticated user prefix', () => {
     assert.equal(a.object.contentType, 'video/mp4');
     assert.throws(() => userPrefix('../another-user'));
     assert.throws(() => uploadMetadata({ ...input, size: 1000001 }, 'default-user', config));
-    assert.throws(() => uploadMetadata({ ...input, filename: 'file.html' }, 'default-user', config));
+    const html = uploadMetadata({ ...input, filename: 'file.html' }, 'default-user', config);
+    assert.equal(html.video.attachable, false);
+    assert.equal(html.object.contentType, 'application/octet-stream');
 });
 
 test('resumes from server-confirmed offset and sends only remaining chunks', async () => {

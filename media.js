@@ -1,8 +1,11 @@
 /** GCS video references are stored with chat media, never fetched by the browser. */
-const VIDEO_MIME_TYPES = {
+const FILE_MIME_TYPES = {
     mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
     mpeg: 'video/mpeg', mpg: 'video/mpeg', avi: 'video/avi',
     wmv: 'video/wmv', '3gp': 'video/3gpp', flv: 'video/x-flv',
+    pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+    mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac',
+    txt: 'text/plain', md: 'text/plain', csv: 'text/plain', json: 'text/plain', xml: 'text/plain', yaml: 'text/plain', yml: 'text/plain', log: 'text/plain',
 };
 
 /** Validate without changing the object name: GCS object names are case sensitive. */
@@ -18,8 +21,8 @@ export function getVideoMimeType(value) {
         pathname = parsed.pathname;
     }
     const extension = pathname.slice(pathname.lastIndexOf('.') + 1).toLowerCase();
-    const mimeType = VIDEO_MIME_TYPES[extension];
-    if (!mimeType) throw new Error('视频地址需包含受支持的文件扩展名；播放页请先云端导入。');
+    const mimeType = FILE_MIME_TYPES[extension];
+    if (!mimeType) throw new Error('此文件类型不能直接附加给 Gemini；可存储、预览或下载。');
     return mimeType;
 }
 
@@ -31,7 +34,7 @@ export function createVideoAttachment(value, duration) {
         throw new Error('视频时长需大于 0；未知时可留空。');
     }
     return {
-        url, type: 'video', title: url.startsWith('https://') ? decodeURIComponent(new URL(url).pathname.split('/').pop()) : url.slice(url.lastIndexOf('/') + 1),
+        url, type: fileInfo(url).type, title: url.startsWith('https://') ? decodeURIComponent(new URL(url).pathname.split('/').pop()) : url.slice(url.lastIndexOf('/') + 1),
         mime_type: mimeType, duration_seconds: durationSeconds, send_scope: 'turn',
     };
 }
@@ -55,4 +58,14 @@ export function appendVideoMarker(messages, marker) {
 /** An empty administrator list allows the currently selected Gemini model. */
 export function isAllowedVideoModel(models, model) {
     return typeof model === 'string' && /^[a-zA-Z0-9._-]{1,180}$/.test(model) && (!models.length || models.includes(model));
+}
+
+/** Storage accepts arbitrary files; model attachments use a supported MIME allowlist. */
+export function fileInfo(value) {
+    let name = String(value || '');
+    if (name.startsWith('https://')) name = new URL(name).pathname;
+    const extension = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+    const mime_type = FILE_MIME_TYPES[extension] || 'application/octet-stream';
+    const type = mime_type.startsWith('video/') ? 'video' : mime_type.startsWith('audio/') ? 'audio' : mime_type.startsWith('image/') ? 'image' : mime_type === 'application/pdf' ? 'pdf' : mime_type.startsWith('text/') ? 'text' : 'file';
+    return { mime_type, type, attachable: type !== 'file' };
 }

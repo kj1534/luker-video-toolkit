@@ -7,7 +7,7 @@
 1. **管理面板 → 服务端插件 → 安装**，仓库 URL：`https://github.com/kj1534/luker-video-toolkit`。
 2. **扩展 → 安装扩展**，使用同一个仓库 URL。需安装到运行该服务端插件的 Luker 实例。
 3. 确保 Luker `config.yaml` 中 `enableServerPlugins: true`。
-4. 重启 Luker 并刷新浏览器，打开附件菜单中的 **视频库：上传与管理 → 设置**（仅管理员可见）。
+4. 重启 Luker 并刷新浏览器，打开附件菜单中的 **文件库：上传与管理 → 设置**（仅管理员可见）。
 5. 在“模型连接”填写与 Luker Gemini 连接一致的 HTTPS 接口地址。可用模型每行填写一个 ID，或留空允许该连接的所有模型；实际模型需支持视频，连接身份需有视频读取权限。
 6. 在“视频存储”填写私有 GCS 桶名称、选择专用服务账号 JSON；如需直接附加 HTTPS 视频，填写允许的来源域名。
 7. 如需链接导入，在“导入节点”中填写节点 ID、名称、HTTPS 控制接口和令牌，选择默认节点。
@@ -34,11 +34,13 @@
    `g` 允许持有 filekey 的外部读取；不要给匿名用户列目录权限。
 4. 执行 `sudo python3 scripts/install-node.py --config /etc/video-toolkit/node.json`。安装器读取配置中的用户、目录和资源限制，安装锁定依赖，启用 systemd 服务。
 5. 参考 [Nginx 配置示例](node-nginx.example.conf)，在现有 HTTPS 站点内代理控制接口。Worker 只监听 loopback；控制接口要求 Bearer 令牌，copyparty 文件使用独立 filekey。
-6. 在 Luker **视频库 → 设置 → 导入节点** 中添加节点 ID、名称、控制 API URL 和同一令牌；“允许附加的 HTTPS 视频来源”中加入 copyparty 公开文件 URL 的 origin。
+6. 在 Luker **文件库 → 设置 → 导入节点** 中添加节点 ID、名称、控制 API URL 和同一令牌；“允许附加的 HTTPS 视频来源”中加入 copyparty 公开文件 URL 的 origin。
 
 升级节点：下载新版本、验证 checksum、解压，再运行同一个安装命令。配置和凭据不覆盖；先前程序保存在安装目录 `previous/`。升级/重启会丢失在途任务，不要在有重要传输时升级。实例重建可用相同配置重新安装。
 
-若不需要 copyparty，设 `small_video.enabled: false`，所有链接导入结果都进 GCS。`small_video.max_bytes` 与 Luker 的 `https_max_bytes` 应一致。copyparty 的实际清理周期需与 `retention_seconds` 匹配，后者用于视频库到期显示。
+若不需要 copyparty，设 `small_video.enabled: false`，所有链接导入结果都进 GCS。`small_video.max_bytes` 与 Luker 的 `https_max_bytes` 应一致。copyparty 的实际清理周期需与 `retention_seconds` 匹配，后者用于文件库到期显示。
 
 
 低内存节点应设置合适的 systemd 内存限额，并为其他服务留出余量。
+
+共享目录管理及 GCS 删除权限配置见[统一文件库指南](file-library.md)。

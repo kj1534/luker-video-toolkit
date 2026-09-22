@@ -1,5 +1,6 @@
 """Anonymous Iwara/Bilibili page downloads; no browser cookies or DRM handling."""
 import json
+import mimetypes
 import copyparty_store
 import math
 import urllib.parse
@@ -37,18 +38,20 @@ def finish_file(job, file, title, mime, config):
     size = file.stat().st_size
     if not 0 < size <= config['max_bytes']:
         raise ValueError('文件超过 2 GiB 上限或内容为空。')
-    info = subprocess.run([config['ffprobe'], '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', str(file)], capture_output=True, check=True, timeout=30)
-    media = json.loads(info.stdout)
-    duration = float(media['format']['duration'])
-    if not media.get('streams') or not math.isfinite(duration) or duration <= 0:
-        raise ValueError('文件不包含可识别的视频或有效时长。')
+    duration = None
+    if mime.startswith(('video/', 'audio/')):
+        info = subprocess.run([config['ffprobe'], '-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', str(file)], capture_output=True, check=True, timeout=30)
+        media = json.loads(info.stdout)
+        duration = float(media['format']['duration'])
+        if not media.get('streams') or not math.isfinite(duration) or duration <= 0:
+            raise ValueError('文件不包含可识别的音视频或有效时长。')
     title = re.sub(r'[\\/\x00-\x1f]', '_', title)[:150] or 'video'
     if not title.lower().endswith(file.suffix):
         title += file.suffix
     metadata = {'filename': title, 'size': size, 'mime_type': mime, 'duration_seconds': duration}
     job.update(total=size, done=size, metadata=metadata)
     small = config['small_video']
-    if small['enabled'] and size <= small['max_bytes']:
+    if config.get('_destination') == 'copyparty' or (config.get('_destination', 'auto') == 'auto' and small['enabled'] and size <= small['max_bytes']):
         job['status'] = 'publishing'
         video = copyparty_store.publish(file, metadata, small['copyparty'])
         job.update(status='complete', video=video, finished=time.time())
@@ -62,12 +65,14 @@ def direct_download(job, url, directory, config):
     with open_source(url) as response:
         mime = response.headers.get('Content-Type', '').split(';')[0].lower()
         title = response.headers.get_filename() or urllib.parse.unquote(urllib.parse.urlsplit(response.url).path.rsplit('/', 1)[-1]) or 'video'
-        extension = types.get(mime)
-        if mime == 'application/octet-stream':
-            extension = pathlib.Path(title).suffix.lower()
-            mime = next((key for key, value in types.items() if value == extension), '')
-        if not extension or extension not in types.values():
-            raise ValueError('链接不是视频文件直链；播放页目前仅支持 Iwara 和 B站。')
+        title = config.get('_filename') or title
+        extension = pathlib.Path(title).suffix.lower()
+        if not re.fullmatch(r'\.[a-z0-9]{1,12}', extension):
+            extension = types.get(mime) or mimetypes.guess_extension(mime) or '.bin'
+        if mime in ('application/octet-stream', ''):
+            mime = types.get(mime) or mimetypes.guess_type(title)[0] or 'application/octet-stream'
+        if mime == 'text/html' and not config.get('_filename'):
+            raise ValueError('播放页目前仅支持 Iwara 和 B站；其他来源请提供文件直链。')
         total = int(response.headers.get('Content-Length', '0'))
         if total > config['max_bytes']:
             raise ValueError('视频超过 2 GiB 上限。')

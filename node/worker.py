@@ -12,6 +12,8 @@ import urllib.parse
 import urllib.request
 import uuid
 import argparse
+import copy
+import library
 from source_fetch import open_source, validate_https, start_proxy
 import web_import
 
@@ -150,6 +152,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.authorized():
             return
+        if self.path == '/library/roots':
+            return self.reply(200, {'volumes':library.roots(CONFIG)})
         if self.path == '/healthz':
             return self.reply(200, {'ok': True})
         if self.path.startswith('/jobs/'):
@@ -165,10 +169,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= 16384:
                 raise ValueError('Invalid request size')
             body = json.loads(self.rfile.read(length))
+            if self.path == '/library/list':
+                return self.reply(200, library.list_files(CONFIG, body.get('volume'), body.get('path', '')))
+            if self.path == '/library/file':
+                return self.reply(200, library.get_file(CONFIG, body.get('volume'), body.get('path', '')))
+            if self.path == '/library/delete':
+                return self.reply(200, library.delete_file(CONFIG, body.get('volume'), body.get('path', ''), body.get('size'), body.get('modified')))
             if self.path == '/jobs':
                 source = source_url(body.get('source_url', ''))
+                settings = copy.deepcopy(CONFIG)
+                destination = body.get('destination', 'auto')
+                if destination not in ('auto', 'gcs', 'copyparty'):
+                    raise ValueError('Invalid destination')
+                settings['_destination'] = destination
+                if body.get('filename'):
+                    filename = body['filename']
+                    if not isinstance(filename, str) or len(filename) > 180 or '/' in filename or '\\' in filename:
+                        raise ValueError('Invalid filename')
+                    settings['_filename'] = filename
+                if destination == 'copyparty' and body.get('volume'):
+                    settings['small_video']['copyparty'] = library.volume(CONFIG, body['volume'])
                 job_id = new_job()
-                POOL.submit(web_import.download, JOBS[job_id], source, CONFIG, WEB_PROXY)
+                POOL.submit(web_import.download, JOBS[job_id], source, settings, WEB_PROXY)
                 return self.reply(202, {'id': job_id})
             parts = self.path.split('/')
             if len(parts) == 4 and parts[1] == 'jobs' and parts[3] == 'upload':

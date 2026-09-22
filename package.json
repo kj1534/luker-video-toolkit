@@ -1,7 +1,7 @@
 {
   "name": "luker-video-toolkit",
-  "version": "0.3.0",
-  "description": "Turn-scoped HTTPS and GCS video attachments with configurable remote import workers for Luker.",
+  "version": "0.4.0",
+  "description": "Unified GCS and copyparty file management with turn-scoped Gemini attachments for Luker.",
   "type": "module",
   "main": "server/index.mjs",
   "license": "AGPL-3.0-only",

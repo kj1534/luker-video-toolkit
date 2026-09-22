@@ -4,11 +4,14 @@ import { pathToFileURL } from 'node:url';
 import { validateVideo, createRelay } from './relay.mjs';
 import { createStorage } from './storage.mjs';
 import { createImportWorkers } from './workers.mjs';
+import { registerFileLibrary } from './file-library.mjs';
+import { fileInfo } from '../media.js';
 import { loadConfig, visibleSettings, prepareSettings, commitSettings, isAdmin, allowsModel } from './settings.mjs';
 
-export const info = { id: 'gcs-video', name: 'Video Toolkit', description: 'Turn-scoped private GCS video attachments using the existing native Gemini connection.' };
+export const info = { id: 'gcs-video', name: 'File Library', description: 'Unified GCS and copyparty file management with turn-scoped Gemini attachments.' };
 const configFile = path.resolve(process.cwd(), 'config/gcs-video/config.json');
 const config = loadConfig(configFile);
+const copyFile = path.resolve(path.dirname(configFile), 'file-copies.json');
 const catalogFile = path.resolve(path.dirname(configFile), 'direct-videos.json');
 let relay;
 let ready;
@@ -34,9 +37,15 @@ async function worker(workerId, route, body) {
 
 function completeDirectImport(entry, job) {
     if (['complete', 'failed'].includes(job.status)) entry.finished = true;
+    if (job.status === 'complete' && entry.copyKey && entry.video?.url?.startsWith('gs://')) {
+        const copies = fs.existsSync(copyFile) ? JSON.parse(fs.readFileSync(copyFile, 'utf8')) : {};
+        copies[entry.copyKey] = entry.video.url;
+        fs.writeFileSync(copyFile + '.tmp', JSON.stringify(copies), {mode:0o600}); fs.renameSync(copyFile + '.tmp', copyFile);
+    }
     if (job.status !== 'complete' || !job.video) return false;
     if (!entry.submitted) {
-        validateVideo(job.video, config);
+        // Unknown formats remain manageable files, but cannot be sent as model attachments.
+        if (fileInfo(job.video.url).attachable) validateVideo(job.video, config);
         saveDirectVideo(entry.user, job.video);
         entry.video = job.video;
         entry.submitted = true;
@@ -49,6 +58,11 @@ function readCatalog() {
 function readDirectVideos(handle) {
     return (readCatalog()[handle] || []).filter(video => Date.parse(video.expires) > Date.now());
 }
+function forgetCatalog(url) {
+    const data = readCatalog();
+    for (const user of Object.keys(data)) data[user] = data[user].filter(item=>item.url.split('?')[0] !== url.split('?')[0]);
+    fs.writeFileSync(catalogFile + '.tmp', JSON.stringify(data), {mode:0o600});fs.renameSync(catalogFile+'.tmp',catalogFile);
+}
 function saveDirectVideo(handle, video) {
     const data = readCatalog();
     data[handle] = [...(data[handle] || []).filter(item => item.url !== video.url && Date.parse(item.expires) > Date.now()), video];
@@ -57,7 +71,19 @@ function saveDirectVideo(handle, video) {
     fs.renameSync(temporary, catalogFile);
 }
 
+async function startJob(user, workerId, source, options = {}) {
+    if (options.copyKey) for (const [id, entry] of importJobs) {
+        if (entry.user === user && entry.copyKey === options.copyKey && !entry.finished && !entry.error) return {id, worker_id:entry.workerId};
+    }
+    const {copyKey, ...body} = options;
+    const job = await worker(workerId, '/jobs', { source_url:source, ...body });
+    const id = `${workerId}:${job.id}`;
+    importJobs.set(id, {user, workerId, remoteId:job.id, created:Date.now(), copyKey});
+    return {id, worker_id:workerId};
+}
+
 export function init(router) {
+    registerFileLibrary(router, {config, worker, storage:()=>storage, startJob, catalog:readDirectVideos, copyFile, forgetCatalog});
     router.get('/config', async (request, response) => {
         try {
             await ready;
@@ -140,10 +166,7 @@ export function init(router) {
             if (!user) return response.sendStatus(401);
             const workerId = workers.get(request.body?.worker_id).id;
             const source = String(request.body?.source_url || '');
-            const job = await worker(workerId, '/jobs', { source_url: source });
-            const id = `${workerId}:${job.id}`;
-            importJobs.set(id, { user, workerId, remoteId: job.id, created: Date.now() });
-            response.status(202).json({ id, worker_id: workerId });
+            response.status(202).json(await startJob(user, workerId, source));
         } catch { response.status(400).json({ error: '无法导入。请检查所选节点、链接类型与链接权限；支持视频直链及 Iwara、B站公开播放页。' }); }
     });
     router.get('/imports/:id', async (request, response) => {

@@ -39,7 +39,7 @@ def install(config_path, source):
         raise ValueError('Invalid release version')
     backup = prefix / 'previous'
     backup.mkdir(exist_ok=True)
-    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'requirements.lock.txt']
+    names = ['worker.py', 'source_fetch.py', 'web_import.py', 'copyparty_store.py', 'library.py', 'requirements.lock.txt']
     for name in names:
         if (prefix / name).exists():
             shutil.copy2(prefix / name, backup / name)
@@ -57,6 +57,7 @@ def install(config_path, source):
     credentials = [safe_path(config['token_file'])]
     if config['small_video']['enabled']:
         credentials.append(safe_path(config['small_video']['copyparty']['password_file']))
+    credentials += [safe_path(v['password_file']) for v in config.get('library_volumes', [])]
     for file in credentials:
         file.chmod(0o640); shutil.chown(file, user='root', group=user)
     limits = config['resources']

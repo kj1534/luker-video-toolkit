@@ -35,8 +35,10 @@ export async function createSettingsPanel(context, onSaved) {
         row.token.input.attr({ autocomplete: 'new-password', placeholder: value.token_configured ? '已保存，留空保持不变' : '粘贴节点控制令牌' });
         row.url.input.attr('placeholder', 'https://node.example/video-import');
         row.id.input.attr('placeholder', 'primary');
+        row.library = $('<input type="checkbox">').prop('checked', Boolean(value.library_enabled));
+        const libraryLabel = $('<label class="gcs-checkbox">').append(row.library, ' 在文件库显示该节点的共享目录（仅管理员）');
         const remove = $('<button type="button" class="menu_button gcs-subtle">').text('移除节点').on('click', () => { nodeRows.splice(nodeRows.indexOf(row), 1); row.element.remove(); updateDefaults(); });
-        row.element = $('<div class="gcs-node-row">').append(row.id.label, row.label.label, row.url.label, row.token.label, remove);
+        row.element = $('<div class="gcs-node-row">').append(row.id.label, row.label.label, row.url.label, row.token.label, libraryLabel, remove);
         row.id.input.add(row.label.input).on('input', updateDefaults);
         nodeRows.push(row); nodes.append(row.element); updateDefaults();
     }
@@ -64,7 +66,7 @@ export async function createSettingsPanel(context, onSaved) {
         try {
             const keyFile = credential[0].files?.[0];
             if (keyFile?.size > 65536) throw new Error('请选择服务账号 JSON 密钥文件（最大 64 KiB）。');
-            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val() })) };
+            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val(), library_enabled: row.library.prop('checked') })) };
             const result = await fetch(`${API}/settings`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify(body) });
             const data = await result.json();
             if (!result.ok) throw new Error(data.error || '保存失败。');

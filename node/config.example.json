@@ -25,5 +25,6 @@
     "memory_high": "256M",
     "memory_max": "384M",
     "cpu_quota": "100%"
-  }
+  },
+  "library_volumes": []
 }

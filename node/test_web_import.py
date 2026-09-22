@@ -31,5 +31,5 @@ class DownloadLimitTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch('web_import.open_source',return_value=Source()):
             job={};web_import.download(job,'https://example.org/fake.mp4',{'download_directory':temp,'max_bytes':100,'download_timeout_seconds':10},'')
             self.assertEqual(job['status'],'failed')
-            self.assertIn('不是视频',job['error'])
+            self.assertIn('播放页',job['error'])
             self.assertEqual(list(pathlib.Path(temp).iterdir()),[])

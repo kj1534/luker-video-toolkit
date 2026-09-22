@@ -21,7 +21,7 @@ export function visibleSettings(config) {
         max_upload_bytes: config.max_upload_bytes, https_max_bytes: config.https_max_bytes,
         direct_media_origins: config.direct_media_origins, default_import_worker: config.default_import_worker,
         credential_configured: Boolean(config.credential_file && fs.existsSync(config.credential_file)),
-        import_workers: config.import_workers.map(({ id, label, url, token_file }) => ({ id, label, url, token_configured: Boolean(token_file && fs.existsSync(token_file)) })) };
+        import_workers: config.import_workers.map(({ id, label, url, token_file, library_enabled }) => ({ id, label, url, library_enabled: Boolean(library_enabled), token_configured: Boolean(token_file && fs.existsSync(token_file)) })) };
 }
 function https(value, label, originOnly = false) {
     let url;
@@ -62,7 +62,7 @@ export function prepareSettings(input, previous, directory) {
         ids.add(id);
         const label = String(item.label || '').trim();
         if (!label || label.length > 80) throw new Error('请输入节点名称。');
-        const worker = { id, label, url: https(item.url, '节点接口'), token_file: previous.import_workers.find(old => old.id === id)?.token_file };
+        const worker = { id, label, library_enabled: item.library_enabled === true, url: https(item.url, '节点接口'), token_file: previous.import_workers.find(old => old.id === id)?.token_file };
         const token = String(item.token || '').trim();
         if (token) {
             if (token.length < 24 || token.length > 4096 || /\s/.test(token)) throw new Error('节点令牌至少 24 个字符，不能含空白。');
