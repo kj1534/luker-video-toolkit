@@ -25,6 +25,8 @@ async function showVideoManager() {
     const importWorker = $('<select class="text_pole" aria-label="导入节点">');
     for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label));
     importWorker.val(config.default_import_worker);
+    const syncCopyparty = $('<input type="checkbox">');
+    const syncLabel = $('<label class="gcs-checkbox">').append(syncCopyparty, ' 同时保存到 copyparty（供播放和下载）').toggle(config.admin);
     const importButton = $('<button type="button" class="menu_button">').text('开始导入');
     const importStatus = $('<div role="status" class="gcs-import-status">');
     let polling = true;
@@ -69,6 +71,7 @@ async function showVideoManager() {
         segments.forEach((part,index)=>breadcrumbs.append($('<span>').text('/'),$('<button type="button" class="menu_button gcs-subtle">').text(part).on('click',()=>{directory=segments.slice(0,index+1).join('/');refresh();})));
     }
     async function previewFile(file) {
+        if (file.storage === 'gcs') { const copied = await copyFile(file); if (copied) await previewFile({...copied,...fileInfo(copied.title || copied.url)}); return; }
         const data = await api('/file-access', {file});
         const body = $('<div class="gcs-file-preview">').append($('<h3>').text(file.title));
         let media;
@@ -100,7 +103,8 @@ async function showVideoManager() {
         let file = result.file;
         if (result.job) { sessionStorage.setItem(importKey,result.job.id); const job = await pollImport(result.job.id,libraryStatus); file = job?.video; }
         if (attach && polling && file) {queueVideo(file.url,file.duration_seconds,file.title);toastr.success('文件已附加到本轮。');renderList();}
-        else if (file) libraryStatus.text(result.reused ? '已使用现有 GCS 副本，没有重复传输。' : '操作完成。');
+        else if (file) libraryStatus.text(result.reused ? '已使用现有副本，没有重复传输。' : '操作完成。');
+        return file;
     }
     async function attachFile(file) { await completeTask(await api('/file-attach',{file}),true); }
     async function copyFile(file) {
@@ -109,11 +113,11 @@ async function showVideoManager() {
             const choices = sources.filter(item=>item.storage==='copyparty'); if (!choices.length) throw new Error('请先在设置中启用共享目录文件库。');
             const select = $('<select class="text_pole">'); for (const item of choices) select.append($('<option>').val(item.id).text(item.label));
             const preferred = choices.find(item=>item.volume==='imports');if(preferred)select.val(preferred.id);
-            const body = $('<div class="gcs-video-dialog">').append($('<h3>').text('复制到 copyparty'),$('<p>').text('目标节点直接从 GCS 拉取，产生 GCS 出站流量。原文件保留。'),select);
+            const body = $('<div class="gcs-video-dialog">').append($('<h3>').text('复制到 copyparty'),$('<p>').text('由配置的 GCS 读取节点经 Google 私有 API 读取，再保存到所选 copyparty 目录。原文件保留；之后播放使用 copyparty 副本。'),select);
             if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'复制',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return;
             target=choices.find(item=>item.id===select.val());
         }
-        await completeTask(await api('/file-transfer',{file,destination:file.storage==='gcs'?'copyparty':'gcs',target}));
+        return await completeTask(await api('/file-transfer',{file,destination:file.storage==='gcs'?'copyparty':'gcs',target}));
     }
     sourceSelect.on('change',()=>{directory='';page=0;refresh();});
     const count = $('<span class="gcs-muted" role="status">');
@@ -157,7 +161,7 @@ async function showVideoManager() {
             const copyLink=action('复制地址',()=>copyUrl(video.url,copyLink));
             const menu=$('<details class="gcs-file-menu">').append($('<summary>').text('管理'),$('<div class="gcs-file-menu-actions">').append(action('下载',()=>downloadFile(video)),copyLink,...(video.storage!=='gcs'||config.admin?[action(video.storage==='gcs'?'复制到 copyparty':'复制到 GCS',()=>copyFile(video))]:[])));
             if(video.storage==='gcs'||video.storage==='copyparty')menu.find('.gcs-file-menu-actions').append(action('删除',()=>deleteFile(video)));
-            $('<article class="gcs-video-list-item">').append(main,$('<div class="gcs-actions">').append(action('预览',()=>previewFile(video)),attach,menu)).appendTo(list);
+            $('<article class="gcs-video-list-item">').append(main,$('<div class="gcs-actions">').append(action(video.storage==='gcs'?'复制后预览':'预览',()=>previewFile(video)).prop('disabled',video.storage==='gcs'&&!config.admin),attach,menu)).appendTo(list);
 
         }
         pageLabel.text(`${page + 1} / ${pages}`); previous.prop('disabled', page === 0); next.prop('disabled', page + 1 >= pages);
@@ -255,7 +259,7 @@ async function showVideoManager() {
                 const job = await response.json();
                 const state = {queued:'排队中',downloading:'解析 / 下载中',ready:'等待上传',running:'上传 GCS 中',publishing:'保存临时直链中',complete:'完成',failed:'失败'}[job.status] || job.status;
                 taskStatus.text(`导入节点 ${job.worker_id}：${state} · ${(job.done / 1048576).toFixed(1)} / ${(job.total / 1048576).toFixed(1)} MiB`);
-                if (job.status === 'complete') { sessionStorage.removeItem(importKey); taskStatus.text('导入完成，可以从下方列表附加。'); await refresh(); return job; }
+                if (job.status === 'complete') { sessionStorage.removeItem(importKey); taskStatus.text(job.warning || (job.sync_video ? '导入完成，已同步到 copyparty。' : '导入完成，可以从下方列表附加。')); await refresh(); return job; }
                 if (job.status === 'failed') { sessionStorage.removeItem(importKey); throw new Error(job.error || '云端导入失败，请检查链接后重试。'); }
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
@@ -266,7 +270,7 @@ async function showVideoManager() {
         importButton.prop('disabled', true);
         importStatus.text('正在检查链接并创建导入任务…');
         try {
-            const response = await fetch(`${API}/imports`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({ source_url: importUrl.val(), worker_id: importWorker.val() }) });
+            const response = await fetch(`${API}/imports`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify({ source_url: importUrl.val(), worker_id: importWorker.val(), sync_copyparty: syncCopyparty.prop('checked') }) });
             const job = await response.json();
             if (!response.ok) throw new Error(job.error || '导入失败。');
             sessionStorage.setItem(importKey, job.id);
@@ -302,7 +306,7 @@ async function showVideoManager() {
         $('<p class="gcs-muted">').text('文件直接上传到 GCS。关闭面板会暂停上传，重新选择同一文件可继续。')));
     addTab('import', '链接导入', $('<section class="gcs-form-panel">').append(
         $('<label class="gcs-field">').append($('<span>').text('文件链接'), importUrl),
-        $('<div class="gcs-import-controls">').append($('<label class="gcs-field">').append($('<span>').text('处理节点'), importWorker), importButton), importStatus,
+        $('<div class="gcs-import-controls">').append($('<label class="gcs-field">').append($('<span>').text('处理节点'), importWorker), importButton), syncLabel, importStatus,
         $('<p class="gcs-muted">').text('支持文件直链、Iwara 和 B站。自动读取时长并选择存储，关闭面板后任务继续。')));
     if (!config.import_workers.length) { importButton.prop('disabled', true); importStatus.text('管理员尚未添加导入节点。'); }
     if (config.admin) {

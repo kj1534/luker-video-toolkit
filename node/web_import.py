@@ -2,6 +2,7 @@
 import json
 import mimetypes
 import copyparty_store
+import gcs_read
 import math
 import urllib.parse
 import os
@@ -57,12 +58,18 @@ def finish_file(job, file, title, mime, config):
         job.update(status='complete', video=video, finished=time.time())
         cleanup(job)
     else:
+        if config.get('_sync_copyparty'):
+            job['status'] = 'publishing'
+            try:
+                job['sync_video'] = copyparty_store.publish(file, metadata, small['copyparty'])
+            except Exception:
+                job['warning'] = 'copyparty 同步失败，GCS 上传将继续；完成后可重试复制。'
         job.update(status='ready', ready_at=time.time(), _file=str(file))
 
 
 def direct_download(job, url, directory, config):
     types = {'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'video/mpeg': '.mpeg', 'video/x-msvideo': '.avi', 'video/avi': '.avi', 'video/x-ms-wmv': '.wmv', 'video/wmv': '.wmv', 'video/3gpp': '.3gp', 'video/x-flv': '.flv'}
-    with open_source(url) as response:
+    with (gcs_read.open_read(url, config) if config.get('_gcs_source') else open_source(url)) as response:
         mime = response.headers.get('Content-Type', '').split(';')[0].lower()
         title = response.headers.get_filename() or urllib.parse.unquote(urllib.parse.urlsplit(response.url).path.rsplit('/', 1)[-1]) or 'video'
         title = config.get('_filename') or title

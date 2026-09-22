@@ -23,8 +23,13 @@ export async function createSettingsPanel(context, onSaved) {
     const nodes = $('<div class="gcs-node-list">');
     const nodeRows = [];
     const defaultSelect = $('<select class="text_pole" aria-label="默认导入节点">');
+    const readSelect = $('<select class="text_pole" aria-label="GCS 读取节点">');
     function updateDefaults() {
         const selected = defaultSelect.val() || current.default_import_worker;
+        const reader = readSelect.val() || current.gcs_read_worker;
+        readSelect.empty().append($('<option>').val('').text('未配置（禁止 GCS 下载和复制）'));
+        for (const row of nodeRows) readSelect.append($('<option>').val(row.id.input.val()).text(row.label.input.val() || row.id.input.val()));
+        if (nodeRows.some(row=>row.id.input.val()===reader)) readSelect.val(reader);
         defaultSelect.empty();
         for (const row of nodeRows) defaultSelect.append($('<option>').val(row.id.input.val()).text(row.label.input.val() || row.id.input.val() || '未命名节点'));
         if (!nodeRows.length) defaultSelect.append($('<option>').val('').text('不使用导入节点'));
@@ -58,6 +63,7 @@ export async function createSettingsPanel(context, onSaved) {
         $('<label class="gcs-field">').append($('<span>').text('允许附加的 HTTPS 视频来源（每行一个域名地址）'), origins),
         $('<h4>').text('导入节点'), $('<p class="gcs-muted">').text('添加已部署节点的接口和令牌；不添加节点也可上传本地视频。'),
         nodes, add, $('<label class="gcs-field">').append($('<span>').text('默认节点'), defaultSelect),
+        $('<label class="gcs-field">').append($('<span>').text('GCS 下载与复制节点（需配置 Google 私有 API 地址）'),readSelect),
         $('<div class="gcs-actions">').append(save, test), testResult,
     );
     root.append(fields, status);
@@ -66,7 +72,7 @@ export async function createSettingsPanel(context, onSaved) {
         try {
             const keyFile = credential[0].files?.[0];
             if (keyFile?.size > 65536) throw new Error('请选择服务账号 JSON 密钥文件（最大 64 KiB）。');
-            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val(), library_enabled: row.library.prop('checked') })) };
+            const body = { upstream: upstream.input.val(), models: models.val().split('\n').map(x => x.trim()).filter(Boolean), bucket: bucket.input.val(), max_upload_bytes: Math.round(Number(maxSize.input.val()) * 1048576), https_max_bytes: Math.round(Number(directSize.input.val()) * 1000000), direct_media_origins: origins.val().split('\n').map(x => x.trim()).filter(Boolean), credential_json: keyFile ? await keyFile.text() : undefined, gcs_read_worker: readSelect.val() || '', default_import_worker: defaultSelect.val() || '', import_workers: nodeRows.map(row => ({ id: row.id.input.val(), label: row.label.input.val(), url: row.url.input.val(), token: row.token.input.val(), library_enabled: row.library.prop('checked') })) };
             const result = await fetch(`${API}/settings`, { method: 'POST', headers: context().getRequestHeaders(), body: JSON.stringify(body) });
             const data = await result.json();
             if (!result.ok) throw new Error(data.error || '保存失败。');

@@ -13,9 +13,9 @@ function fixture(t) {
     const gcs={storage:'gcs',url:'gs://private-bucket/videos/alice/report.pdf',title:'report.pdf',size:20000000,generation:'1'};
     const copyFile=path.join(dir,'copies.json');
     registerFileLibrary({get:(route,handler)=>routes.set('GET '+route,handler),post:(route,handler)=>routes.set('POST '+route,handler)}, {
-        config:{https_max_bytes:14000000,default_import_worker:'primary',import_workers:[{id:'primary',library_enabled:true,label:'Primary'}]},
+        config:{https_max_bytes:14000000,default_import_worker:'primary',gcs_read_worker:'reader',import_workers:[{id:'primary',library_enabled:true,label:'Primary'},{id:'reader',url:'https://reader.example/gcs-import'}]},
         storage:()=>({list:async()=>({items:[gcs],nextPageToken:''}),stat:async()=>gcs,access:async()=>({url:'https://storage.googleapis.com/signed-fixture',file:gcs}),remove:async()=>({ok:true})}),
-        worker:async(id,route,body)=>{calls.push({id,route,body});return route==='/library/roots'?{volumes:[{id:'files',label:'Files'}]}:route==='/library/list'?{items:[shared]}:shared;},
+        worker:async(id,route,body)=>{calls.push({id,route,body});return route==='/downloads'?{ticket:'a'.repeat(43),expires_seconds:300}:route==='/library/roots'?{volumes:[{id:'files',label:'Files'}]}:route==='/library/list'?{items:[shared]}:shared;},
         startJob:async(user,id,url,options)=>{jobs.push({user,id,url,options});return{id:'job'};},catalog:()=>[],copyFile,forgetCatalog:()=>{},
     });
     async function request(method,route,body={},admin=false,query={}){let result,status=200;const response={set(){return this;},status(code){status=code;return this;},sendStatus(code){status=code;},json(value){result=value;}};await routes.get(method+' '+route)({user:{profile:{handle:'alice',admin}},body,query},response);return{status,result};}
@@ -36,11 +36,21 @@ test('large shared attachments promote once; small files use their existing dire
     const repeat=await f.request('POST','/file-attach',{file},true);assert.equal(repeat.result.reused,true);assert.equal(f.jobs.length,1);
     f.shared.size=1000;const small=await f.request('POST','/file-attach',{file},true);assert.equal(small.result.file.url,f.shared.url);assert.equal(f.jobs.length,1);
 });
-test('GCS to copyparty copy is pulled by the selected destination node',async t=>{
+test('GCS copies use the configured private reader, independent of destination',async t=>{
     const f=fixture(t);const result=await f.request('POST','/file-transfer',{file:f.gcs,destination:'copyparty',target:{worker_id:'primary',volume:'files'}},true);
-    assert.equal(result.status,200);assert.equal(f.jobs[0].id,'primary');assert.equal(f.jobs[0].url,'https://storage.googleapis.com/signed-fixture');assert.equal(f.jobs[0].options.destination,'copyparty');assert.equal(f.jobs[0].options.originGcs,f.gcs.url);assert.equal(f.jobs[0].options.copyVolume,'files');
+    assert.equal(result.status,200);assert.equal(f.jobs[0].id,'reader');assert.equal(f.jobs[0].options.copyWorker,'primary');assert.equal(f.jobs[0].options.gcs_source,true);assert.equal(f.jobs[0].url,'https://storage.googleapis.com/signed-fixture');assert.equal(f.jobs[0].options.destination,'copyparty');assert.equal(f.jobs[0].options.originGcs,f.gcs.url);assert.equal(f.jobs[0].options.copyVolume,'files');
 });
 test('PDF, images, audio and text use native fileData MIME types; arbitrary files remain storage-only',()=>{
     for(const [name,type] of [['report.pdf','application/pdf'],['image.png','image/png'],['audio.mp3','audio/mpeg'],['notes.md','text/plain']])assert.equal(createVideoAttachment('gs://private-bucket/videos/alice/'+name).mime_type,type);
     assert.equal(fileInfo('archive.zip').attachable,false);assert.throws(()=>createVideoAttachment('gs://private-bucket/archive.zip'));
+});
+
+test('GCS preview is forbidden and download returns only a reader ticket',async t=>{
+ const f=fixture(t);
+ assert.equal((await f.request('POST','/file-access',{file:f.gcs})).status,400);
+ assert.equal(f.calls.length,0);
+ const download=await f.request('POST','/file-access',{file:f.gcs,download:true});
+ assert.equal(download.status,200);assert.ok(download.result.url.startsWith('https://reader.example/gcs-import/downloads/'));
+ assert.equal(download.result.url.includes('storage.googleapis.com'),false);
+ assert.equal(f.calls[0].id,'reader');assert.equal(f.calls[0].route,'/downloads');
 });

@@ -13,6 +13,8 @@ import urllib.request
 import uuid
 import argparse
 import copy
+import secrets
+import gcs_read
 import library
 from source_fetch import open_source, validate_https, start_proxy
 import web_import
@@ -21,6 +23,8 @@ CONFIG = {}
 JOBS = {}
 LOCK = threading.Lock()
 WEB_PROXY = None
+DOWNLOADS = {}
+DOWNLOAD_SLOTS = threading.BoundedSemaphore(2)
 POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 CHUNK = 8 * 1024 * 1024
 
@@ -50,7 +54,7 @@ def upload_session(value):
 def request_upload(session, data, content_range):
     req = urllib.request.Request(session, data=data, method='PUT', headers={'Content-Range': content_range, 'Content-Type': 'application/octet-stream'})
     try:
-        response = HTTP.open(req, timeout=90)
+        response = gcs_read.private_open(req, CONFIG) if CONFIG.get('gcs_private_endpoint') else HTTP.open(req, timeout=90)
     except urllib.error.HTTPError as error:
         if error.code != 308:
             raise
@@ -150,6 +154,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if self.path.startswith('/downloads/'):
+            ticket = self.path[len('/downloads/'):]
+            with LOCK:
+                value = DOWNLOADS.pop(ticket, None)
+            if not value or value['expires'] < time.time():
+                return self.reply(404, {'error':'Download expired; request a new link'})
+            if not DOWNLOAD_SLOTS.acquire(blocking=False):
+                return self.reply(503, {'error':'Download node busy; request a new link'})
+            started = False
+            try:
+                with gcs_read.open_read(value['url'], CONFIG) as source:
+                    size = int(source.headers.get('Content-Length', '0'))
+                    if not 0 < size <= CONFIG['max_bytes']:
+                        raise ValueError('Invalid download size')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/octet-stream')
+                    self.send_header('Content-Disposition', "attachment; filename*=UTF-8''" + urllib.parse.quote(value['filename'], safe=''))
+                    self.send_header('Content-Length', str(size))
+                    self.send_header('Cache-Control', 'private, no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    started = True
+                    left = size
+                    while left:
+                        block = source.read(min(left, 256 * 1024))
+                        if not block: raise ValueError('Incomplete download')
+                        self.wfile.write(block)
+                        left -= len(block)
+            except Exception:
+                if not started: self.reply(502, {'error':'Private GCS read failed; no public fallback'})
+                self.close_connection = True
+            finally:
+                DOWNLOAD_SLOTS.release()
+            return
         if not self.authorized():
             return
         if self.path == '/library/roots':
@@ -169,6 +207,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= 16384:
                 raise ValueError('Invalid request size')
             body = json.loads(self.rfile.read(length))
+            if self.path == '/downloads':
+                gcs_read.validate(body.get('url', ''), CONFIG)
+                name = body.get('filename', 'download')
+                if not isinstance(name, str) or len(name) > 180 or any(ord(c)<32 for c in name):
+                    raise ValueError('Invalid filename')
+                with LOCK:
+                    for key in list(DOWNLOADS):
+                        if DOWNLOADS[key]['expires'] < time.time(): del DOWNLOADS[key]
+                    if len(DOWNLOADS) >= 128: raise ValueError('Too many tickets')
+                    ticket = secrets.token_urlsafe(32)
+                    DOWNLOADS[ticket] = {'url':body['url'], 'filename':name, 'expires':time.time()+300}
+                return self.reply(201, {'ticket':ticket, 'expires_seconds':300})
             if self.path == '/library/list':
                 return self.reply(200, library.list_files(CONFIG, body.get('volume'), body.get('path', '')))
             if self.path == '/library/file':
@@ -182,6 +232,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if destination not in ('auto', 'gcs', 'copyparty'):
                     raise ValueError('Invalid destination')
                 settings['_destination'] = destination
+                settings['_sync_copyparty'] = body.get('sync_copyparty') is True
+                if settings['_sync_copyparty'] and not settings['small_video']['enabled']:
+                    raise ValueError('Copyparty is not configured')
+                if body.get('gcs_source') is True:
+                    gcs_read.validate(source, settings)
+                    settings['_gcs_source'] = True
                 if body.get('filename'):
                     filename = body['filename']
                     if not isinstance(filename, str) or len(filename) > 180 or '/' in filename or '\\' in filename:

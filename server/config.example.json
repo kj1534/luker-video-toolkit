@@ -22,5 +22,6 @@
       "token_file": "/path/to/luker/config/gcs-video/primary.token",
       "library_enabled": false
     }
-  ]
+  ],
+  "gcs_read_worker": ""
 }

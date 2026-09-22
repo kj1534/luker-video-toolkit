@@ -40,20 +40,40 @@ async function completeDirectImport(entry, job) {
     if (job.status === 'complete' && !entry.copyRecorded) {
         let key = entry.copyKey;
         let uri = entry.video?.url;
+        let copied;
         if (entry.originGcs && job.video?.url) {
-            const roots = await worker(entry.workerId, '/library/roots');
+            const destinationWorker = entry.copyWorker || entry.workerId;
+            const roots = await worker(destinationWorker, '/library/roots');
             const root = roots.volumes.find(item=>item.id===entry.copyVolume);
             if (!root) throw new Error('目标目录已移除，无法登记副本。');
             const base = new URL(root.public_url); const url = new URL(job.video.url);
             const prefix = base.pathname.replace(/\/?$/, '/');
             if (url.origin !== base.origin || !url.pathname.startsWith(prefix)) throw new Error('副本路径不在目标目录内。');
-            const file = await worker(entry.workerId, '/library/file', {volume:entry.copyVolume,path:decodeURIComponent(url.pathname.slice(prefix.length))});
-            key = fileCopyKey(entry.user,{...file,worker_id:entry.workerId}); uri = entry.originGcs;
+            const file = await worker(destinationWorker, '/library/file', {volume:entry.copyVolume,path:decodeURIComponent(url.pathname.slice(prefix.length))});
+            copied = {...file,worker_id:destinationWorker};
+            key = fileCopyKey(entry.user,copied); uri = entry.originGcs;
         }
         if (key && uri?.startsWith('gs://')) {
             const copies = fs.existsSync(copyFile) ? JSON.parse(fs.readFileSync(copyFile,'utf8')) : {};
             copies[key] = uri;
+            if (entry.copyLinkKey && copied) copies[entry.copyLinkKey] = copied;
             fs.writeFileSync(copyFile+'.tmp',JSON.stringify(copies),{mode:0o600});fs.renameSync(copyFile+'.tmp',copyFile);
+        }
+        if (job.sync_video && entry.video?.url?.startsWith('gs://')) {
+            saveDirectVideo(entry.user, job.sync_video);
+            const node = config.import_workers.find(item=>item.library_enabled);
+            if (node) {
+                const roots = await worker(node.id, '/library/roots');
+                const url = new URL(job.sync_video.url);
+                for (const root of roots.volumes) {
+                    const base = new URL(root.public_url); const prefix = base.pathname.replace(/\/?$/, '/');
+                    if (url.origin!==base.origin || !url.pathname.startsWith(prefix)) continue;
+                    const file = await worker(node.id,'/library/file',{volume:root.id,path:decodeURIComponent(url.pathname.slice(prefix.length))});
+                    const copies = fs.existsSync(copyFile)?JSON.parse(fs.readFileSync(copyFile,'utf8')):{};
+                    copies[fileCopyKey(entry.user,{...file,worker_id:node.id})]=entry.video.url;
+                    fs.writeFileSync(copyFile+'.tmp',JSON.stringify(copies),{mode:0o600});fs.renameSync(copyFile+'.tmp',copyFile);
+                }
+            }
         }
         entry.copyRecorded = true;
     }
@@ -91,10 +111,10 @@ async function startJob(user, workerId, source, options = {}) {
     if (options.copyKey) for (const [id, entry] of importJobs) {
         if (entry.user === user && entry.copyKey === options.copyKey && !entry.finished && !entry.error) return {id, worker_id:entry.workerId};
     }
-    const {copyKey, originGcs, copyVolume, ...body} = options;
+    const {copyKey, originGcs, copyVolume, copyWorker, copyLinkKey, ...body} = options;
     const job = await worker(workerId, '/jobs', { source_url:source, ...body });
     const id = `${workerId}:${job.id}`;
-    importJobs.set(id, {user, workerId, remoteId:job.id, created:Date.now(), copyKey, originGcs, copyVolume});
+    importJobs.set(id, {user, workerId, remoteId:job.id, created:Date.now(), copyKey, originGcs, copyVolume, copyWorker, copyLinkKey});
     return {id, worker_id:workerId};
 }
 
@@ -182,7 +202,9 @@ export function init(router) {
             if (!user) return response.sendStatus(401);
             const workerId = workers.get(request.body?.worker_id).id;
             const source = String(request.body?.source_url || '');
-            response.status(202).json(await startJob(user, workerId, source));
+            const sync = request.body?.sync_copyparty === true;
+            if (sync && !isAdmin(request)) return response.sendStatus(403);
+            response.status(202).json(await startJob(user, workerId, source, {sync_copyparty:sync}));
         } catch { response.status(400).json({ error: '无法导入。请检查所选节点、链接类型与链接权限；支持视频直链及 Iwara、B站公开播放页。' }); }
     });
     router.get('/imports/:id', async (request, response) => {

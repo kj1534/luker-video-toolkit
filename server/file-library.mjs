@@ -55,12 +55,22 @@ export function registerFileLibrary(router, dependencies) {
         }
         let url = file.url;
         let workerId = file.worker_id || config.default_import_worker;
+        let copyWorker;
         if (destination === 'copyparty') {
-            workerId = sharedWorker(request, target.worker_id);
+            copyWorker = sharedWorker(request, target.worker_id);
+            const cached = readCopies()[key];
+            if (cached?.storage === 'copyparty') {
+                try {
+                    const found = await worker(copyWorker, '/library/file', {volume:target.volume,path:cached.path});
+                    if (found.size===cached.size && found.modified===cached.modified) return {file:enrich({...found,worker_id:copyWorker}),reused:true};
+                } catch { /* Missing/expired copy is recreated only on this explicit action. */ }
+            }
+            workerId = config.gcs_read_worker;
+            if (!workerId) throw new Error('请先配置 GCS 读取节点。');
             if (file.storage !== 'gcs') throw new Error('请选择 GCS 文件复制到共享目录。');
             url = (await storage().access(file.url, user, true)).url;
         } else if (file.storage === 'gcs') return { file };
-        const job = await startJob(user, workerId, url, { destination, volume: target.volume, filename: file.title, copyKey: destination === 'gcs' ? key : undefined, originGcs: destination === 'copyparty' ? file.url : undefined, copyVolume: target.volume });
+        const job = await startJob(user, workerId, url, { destination, volume: target.volume, filename: file.title, copyKey: destination === 'gcs' ? key : undefined, originGcs: destination === 'copyparty' ? file.url : undefined, copyVolume: target.volume, copyWorker, copyLinkKey: destination === 'copyparty' ? key : undefined, gcs_source: destination === 'copyparty' });
         return { job };
     }
     router.get('/file-sources', endpoint(sources));
@@ -96,7 +106,15 @@ export function registerFileLibrary(router, dependencies) {
     router.post('/file-access', endpoint(async request => {
         const file = await resolve(request, request.body.file || {});
         const download = request.body.download === true;
-        if (file.storage === 'gcs') return storage().access(file.url, request.user.profile.handle, download);
+        if (file.storage === 'gcs') {
+            if (!download) throw new Error('GCS 文件不提供在线预览；请先复制到 copyparty，再从该副本播放或预览。');
+            const node = config.import_workers.find(item=>item.id===config.gcs_read_worker);
+            if (!node) throw new Error('请先配置 GCS 读取节点。');
+            const signed = await storage().access(file.url, request.user.profile.handle, true);
+            const ticket = await worker(node.id, '/downloads', {url:signed.url,filename:file.title});
+            if (!/^[A-Za-z0-9_-]{32,100}$/.test(ticket.ticket)) throw new Error('下载节点返回无效票据。');
+            return {file,url:node.url.replace(/\/$/,'')+'/downloads/'+ticket.ticket,expires_at:new Date(Date.now()+ticket.expires_seconds*1000).toISOString()};
+        }
         return { file, url: file.url + (download ? (file.url.includes('?') ? '&' : '?') + 'dl' : ''), expires_at: file.expires || null };
     }));
     router.post('/file-delete', endpoint(async request => {
