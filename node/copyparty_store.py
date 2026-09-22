@@ -44,5 +44,5 @@ def publish(file, metadata, config):
             raise ValueError('Copyparty did not return a protected file reference')
         url = public + urllib.parse.quote(name, safe='') + '?' + parsed.query
         now = datetime.now(timezone.utc)
-        return {'url': url, 'title': metadata['filename'], 'size': metadata['size'], 'mime_type': metadata['mime_type'], 'duration_seconds': metadata.get('duration_seconds'), 'created': now.isoformat(), 'expires': (now + timedelta(seconds=config['retention_seconds'])).isoformat(), 'storage': 'https', 'type': 'video', 'send_scope': 'turn'}
+        return {'source_id': metadata.get('source_id',''), 'url': url, 'title': metadata['filename'], 'size': metadata['size'], 'mime_type': metadata['mime_type'], 'duration_seconds': metadata.get('duration_seconds'), 'created': now.isoformat(), 'expires': (now + timedelta(seconds=config['retention_seconds'])).isoformat(), 'storage': 'https', 'type': 'video', 'send_scope': 'turn'}
     raise ValueError('Uploaded video not found in copyparty listing')

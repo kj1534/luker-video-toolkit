@@ -16,7 +16,7 @@ export function uploadMetadata(input, handle, config) {
     const duration = input.duration_seconds == null ? null : Number(input.duration_seconds);
     if (duration !== null && (!Number.isFinite(duration) || duration <= 0)) throw new Error('时长无效。');
     const video = { url: `gs://${config.bucket}/${name}`, title: filename, ...fileInfo(filename), duration_seconds: duration, send_scope: 'turn', size, storage: 'gcs' };
-    return { size, video, object: { name, contentType: video.mime_type, metadata: { original_name: filename, ...(video.duration_seconds ? { duration_seconds: String(video.duration_seconds) } : {}) } } };
+    return { size, video, object: { name, contentType: video.mime_type, metadata: { original_name: filename, ...(typeof input.source_id==='string' && input.source_id ? {source_id:input.source_id.slice(0,100)} : {}), ...(video.duration_seconds ? { duration_seconds: String(video.duration_seconds) } : {}) } } };
 }
 
 export function createStorage(config, fetchImpl) {

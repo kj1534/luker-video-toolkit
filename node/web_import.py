@@ -49,6 +49,7 @@ def finish_file(job, file, title, mime, config):
             raise ValueError('文件不包含可识别的音视频或有效时长。')
     title = naming.filename(title,file.suffix)
     metadata = {'filename': title, 'size': size, 'mime_type': mime, 'duration_seconds': duration}
+    if config.get('_source_id'):metadata['source_id']=config['_source_id']
     job.update(total=size, done=size, metadata=metadata)
     small = config['small_video']
     if config.get('_destination') == 'copyparty' or (config.get('_destination', 'auto') == 'auto' and small['enabled'] and size <= small['max_bytes']):
@@ -144,6 +145,7 @@ def download(job, url, config, proxy):
             raise ValueError('网站解析或下载失败；此链接可能不可公开访问，或解析器需要更新。')
         file = pathlib.Path(directory + '/video.mp4')
         info = json.loads(pathlib.Path(directory + '/output.log').read_text(errors='replace').strip().splitlines()[-1])
+        config['_source_id']=str(info.get('id') or '')[:100]
         title = naming.webpage_name(info,validate_https(url).hostname.endswith('iwara.tv'))
         finish_file(job, file, title, 'video/mp4', config)
     except Exception as error:

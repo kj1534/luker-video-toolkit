@@ -73,4 +73,6 @@ GCS 上传账号要使用删除功能，还需要目标桶的 `storage.objects.d
 
 ## 网站视频命名
 
-Iwara 导入使用 `作者显示昵称 - 标题 [视频ID].mp4`，作者优先使用 API 的 `user.name`，对应 IwaraDownloadTool 的 ALIAS；缺少显示昵称时才使用 `user.username`（AUTHOR）；B站使用作者显示名。中文名称按 UTF-8 字节限制长度，并替换路径/系统保留字符。copyparty 为防止重复导入覆盖，在可读文件名末尾追加短随机标记；不会再以长 UUID 开头。文件库优先显示已登记的原始名称。GCS 对象路径仍保留唯一标识，显示名称保存在 `original_name` 元数据中。存储路径与显示名称分离，避免修正名称时破坏已有附件地址。
+Iwara 导入使用 `作者显示昵称 - 标题.mp4`，作者优先使用 API 的 `user.name`，对应 IwaraDownloadTool 的 ALIAS；缺少显示昵称时才使用 `user.username`（AUTHOR）；B站使用作者显示名。中文名称按 UTF-8 字节限制长度，并替换路径/系统保留字符。copyparty 为防止重复导入覆盖，在可读文件名末尾追加短随机标记；不会再以长 UUID 开头。文件库优先显示已登记的原始名称。GCS 对象路径仍保留唯一标识，显示名称保存在 `original_name` 元数据中。存储路径与显示名称分离，避免修正名称时破坏已有附件地址。
+
+下载使用 copyparty 原生 `dl=可读文件名` 指定 Content-Disposition，用户保存到本机时不带内部防重名标记。源站视频 ID 仅保存在导入记录及 GCS 元数据 `source_id` 中。

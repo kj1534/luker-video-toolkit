@@ -54,3 +54,9 @@ test('GCS preview and download both stage through reader into copyparty',async t
  for(const job of f.jobs){assert.equal(job.id,'reader');assert.equal(job.options.copyWorker,'primary');assert.equal(job.options.gcs_source,true);}
  assert.equal((await f.request('POST','/file-access',{file:f.gcs,download:true})).status,403);
 });
+
+test('copyparty download uses readable filename through native dl parameter',async t=>{
+ const f=fixture(t);const file={...f.shared,worker_id:'primary'};
+ const result=await f.request('POST','/file-access',{file,download:true},true);
+ const url=new URL(result.result.url);assert.equal(url.searchParams.get('dl'),'report.pdf');assert.equal(url.searchParams.get('k'),'fixture');
+});

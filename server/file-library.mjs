@@ -115,7 +115,9 @@ export function registerFileLibrary(router, dependencies) {
             if (!config.copyparty_worker || !config.copyparty_volume) throw new Error('请先配置默认 copyparty 目标。');
             return promote(request,file,'copyparty',{worker_id:config.copyparty_worker,volume:config.copyparty_volume});
         }
-        return { file, url: file.url + (download ? (file.url.includes('?') ? '&' : '?') + 'dl' : ''), expires_at: file.expires || null };
+        const url=new URL(file.url);
+        if(download)url.searchParams.set('dl',file.title.replace(/^[a-f0-9]{32}-/i,'').replace(/ \[v-[a-f0-9]{12}\](?=\.[^.]+$)/i,''));
+        return {file,url:url.href,expires_at:file.expires || null};
     }));
     router.post('/file-delete', endpoint(async request => {
         const ref = request.body.file || {};

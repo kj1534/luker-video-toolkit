@@ -14,9 +14,9 @@ def webpage_name(info, iwara=False):
     # Prefer IwaraDownloadTool ALIAS (user.name); retain username only when display name is absent.
     author=clean(info.get('uploader') or info.get('uploader_id') or 'unknown-author',48)
     identifier=clean(info.get('id') or 'unknown-id',32)
-    overhead=len(f'{author} -  [{identifier}].mp4'.encode('utf-8'))
+    overhead=len(f'{author} - .mp4'.encode('utf-8'))
     title=clean(info.get('title') or identifier,min(120,175-overhead))
-    return f'{author} - {title} [{identifier}].mp4'
+    return f'{author} - {title}.mp4'
 
 
 def filename(value, extension=''):
