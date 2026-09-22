@@ -6,7 +6,7 @@ class NamingTest(unittest.TestCase):
         self.assertEqual(name,'显示昵称 - 测试标题 [video123].mp4')
     def test_multilingual_names_fit_filesystem_and_remove_path_characters(self):
         name=naming.webpage_name({'id':'id','title':'中'*500+'/../bad','uploader_id':'作'*100},True)
-        self.assertLess(len(name.encode())+22,255);self.assertNotIn('/',name)
+        self.assertLessEqual(len(name.encode()),175);self.assertTrue(name.endswith('[id].mp4'));self.assertNotIn('/',name)
         self.assertEqual(naming.filename('simple.txt','.txt'),'simple.txt')
     def test_bilibili_prefers_readable_author(self):
         self.assertEqual(naming.webpage_name({'id':'BVtest','title':'Title','uploader':'Author','uploader_id':'123'}),'Author - Title [BVtest].mp4')
