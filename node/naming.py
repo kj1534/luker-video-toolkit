@@ -11,8 +11,8 @@ def clean(value, budget):
 
 
 def webpage_name(info, iwara=False):
-    # IwaraDownloadTool AUTHOR maps to user.username, exposed as uploader_id by yt-dlp.
-    author=clean((info.get('uploader_id') if iwara else info.get('uploader')) or info.get('uploader') or info.get('uploader_id') or 'unknown-author',48)
+    # Prefer IwaraDownloadTool ALIAS (user.name); retain username only when display name is absent.
+    author=clean(info.get('uploader') or info.get('uploader_id') or 'unknown-author',48)
     identifier=clean(info.get('id') or 'unknown-id',32)
     title=clean(info.get('title') or identifier,120)
     return f'{author} - {title} [{identifier}].mp4'
