@@ -5,6 +5,23 @@ from unittest.mock import patch
 import web_import
 
 class DownloadLimitTest(unittest.TestCase):
+    def test_page_sources_and_per_site_proxies(self):
+        config = {'parser_proxy': 'http://fallback', 'parser_proxies': {
+            'iwara': 'http://iwara', 'bilibili': 'http://bilibili', 'youtube': 'http://youtube'}}
+        cases = [
+            ('https://www.iwara.tv/video/abc123', 'iwara', 'http://iwara'),
+            ('https://www.bilibili.com/video/BV1xx411c7mD', 'bilibili', 'http://bilibili'),
+            ('https://youtu.be/jNQXAC9IVRw', 'youtube', 'http://youtube'),
+        ]
+        for url, site, expected in cases:
+            self.assertEqual(web_import.page_url(url), url)
+            self.assertEqual(web_import.source_site(url), site)
+            self.assertEqual(web_import.parser_proxy(config, 'http://guard', site), expected)
+
+    def test_parser_proxy_falls_back_compatibly(self):
+        self.assertEqual(web_import.parser_proxy({'parser_proxy': 'http://old'}, 'http://guard', 'iwara'), 'http://old')
+        self.assertEqual(web_import.parser_proxy({}, 'http://guard', 'iwara'), 'http://guard')
+
     def test_unknown_content_length_still_enforces_byte_limit_and_cleans_temp_file(self):
         class Headers(dict):
             def get_filename(self):return 'video.mp4'

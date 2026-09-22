@@ -1,6 +1,6 @@
 {
   "name": "luker-video-toolkit",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "description": "Unified GCS and copyparty file management with turn-scoped Gemini attachments for Luker.",
   "type": "module",
   "main": "server/index.mjs",

@@ -6,6 +6,11 @@
   "download_directory": "/var/lib/video-toolkit/downloads",
   "download_timeout_seconds": 1800,
   "yt_dlp": "/opt/video-toolkit/venv/bin/yt-dlp",
+  "parser_proxies": {
+    "iwara": "http://127.0.0.1:17891",
+    "bilibili": "http://127.0.0.1:17892",
+    "youtube": "http://127.0.0.1:17893"
+  },
   "ffprobe": "/usr/bin/ffprobe",
   "small_video": {
     "enabled": true,

@@ -28,7 +28,7 @@ class SourceGuardTest(unittest.TestCase):
         with patch('source_fetch.PinnedHTTPS',side_effect=connection), patch('socket.getaddrinfo',return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('127.0.0.1',443))]), self.assertRaises(ValueError):
             open_source('https://public.example/file.mp4')
     def test_webpage_platform_scope(self):
-        for url in ['https://www.iwara.tv/video/example/title','https://www.bilibili.com/video/BV1xx','https://b23.tv/example']:
+        for url in ['https://www.iwara.tv/video/example/title','https://www.bilibili.com/video/BV1xx','https://b23.tv/example','https://youtube.com/watch?v=a','https://youtu.be/a']:
             self.assertEqual(page_url(url),url)
-        for url in ['https://www.iwara.tv/users/example','https://www.bilibili.com/space/1','https://www.bilibili.com.evil.example/video/a','https://youtube.com/watch?v=a']:
+        for url in ['https://www.iwara.tv/users/example','https://www.bilibili.com/space/1','https://www.bilibili.com.evil.example/video/a','https://youtube.com/channel/a','https://youtu.be/']:
             with self.subTest(url=url), self.assertRaises(ValueError):page_url(url)

@@ -1,4 +1,4 @@
-"""Anonymous Iwara/Bilibili page downloads; no browser cookies or DRM handling."""
+"""Anonymous Iwara/Bilibili/YouTube downloads with per-site proxy routing."""
 import json
 import mimetypes
 import copyparty_store
@@ -16,17 +16,43 @@ import tempfile
 import time
 from source_fetch import validate_https, open_source
 
-ALLOWED = {'iwara.tv', 'www.iwara.tv', 'bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'b23.tv'}
+ALLOWED = {
+    'iwara.tv', 'www.iwara.tv',
+    'bilibili.com', 'www.bilibili.com', 'm.bilibili.com', 'b23.tv',
+    'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+}
+
+
+def source_site(url):
+    host = validate_https(url).hostname
+    if host.endswith('iwara.tv'):
+        return 'iwara'
+    if host.endswith('bilibili.com') or host == 'b23.tv':
+        return 'bilibili'
+    if host.endswith('youtube.com') or host == 'youtu.be':
+        return 'youtube'
+    return 'direct'
+
+
+def parser_proxy(config, fallback, site):
+    per_site = config.get('parser_proxies', {})
+    if isinstance(per_site, dict) and per_site.get(site):
+        return per_site[site]
+    return config.get('parser_proxy') or fallback
 
 
 def page_url(value):
     u = validate_https(value)
     if u.hostname not in ALLOWED:
-        raise ValueError('Only Iwara and Bilibili video pages are supported')
+        raise ValueError('Only Iwara, Bilibili and YouTube video pages are supported')
     if u.hostname.endswith('iwara.tv') and not re.match(r'^/(?:[a-z]{2}/)?video/', u.path):
         raise ValueError('Use a single Iwara video page')
     if u.hostname.endswith('bilibili.com') and not u.path.startswith('/video/'):
         raise ValueError('Use a single Bilibili video page')
+    if u.hostname.endswith('youtube.com') and u.path != '/watch' and not u.path.startswith(('/shorts/', '/live/')):
+        raise ValueError('Use a single YouTube video page')
+    if u.hostname == 'youtu.be' and not u.path.strip('/'):
+        raise ValueError('Use a single YouTube video page')
     return value
 
 
@@ -121,13 +147,27 @@ def download(job, url, config, proxy):
                 url = page_url(response.url)
         url = url.replace('https://m.bilibili.com/', 'https://www.bilibili.com/')
         url = re.sub(r'^(https://(?:www\.)?iwara\.tv)/[a-z]{2}/video/', r'\1/video/', url)
+        site = source_site(url)
+        parse_proxy = parser_proxy(config, proxy, site)
+        extract = [config['yt_dlp'], '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
+                   '--no-warnings', '--socket-timeout', '30', '--retries', '2', '--fragment-retries', '2',
+                   '--proxy', parse_proxy, '--use-extractors', 'Iwara$,BiliBili$,Youtube$',
+                   '--skip-download', '--dump-single-json', '--', page_url(url)]
+        # Expiring URLs stay in this private directory. Iwara and Bilibili media
+        # are fetched from the node directly; YouTube keeps the parser exit.
+        with open(directory + '/info.json', 'wb') as info, open(directory + '/error.log', 'wb') as errors:
+            process = subprocess.Popen(extract, stdout=info, stderr=errors, start_new_session=True)
+            process.wait(timeout=min(180, config['download_timeout_seconds']))
+        if process.returncode:
+            raise ValueError('网站解析失败；当前解析出口可能已失效，请稍后重试。')
+        download_proxy = parse_proxy if site == 'youtube' else proxy
         command = [config['yt_dlp'], '--ignore-config', '--no-cache-dir', '--no-playlist', '--no-progress',
                    '--no-warnings', '--socket-timeout', '30', '--retries', '2', '--fragment-retries', '2',
-                   '--proxy', proxy, '--use-extractors', 'Iwara$,BiliBili$',
+                   '--proxy', download_proxy,
                    '--max-filesize', str(config['max_bytes']), '--match-filter', '!is_live',
                    '--format', 'bv*[protocol=https]+ba[protocol=https]/b[protocol=https]',
                    '--merge-output-format', 'mp4', '--remux-video', 'mp4',
-                   '--output', directory + '/video.%(ext)s', '--print', 'after_move:{"id":%(id)j,"title":%(title)j,"uploader":%(uploader)j,"uploader_id":%(uploader_id)j}', '--', page_url(url)]
+                   '--output', directory + '/video.%(ext)s', '--load-info-json', directory + '/info.json']
         # Logs may contain expiring URLs; keep only in this private temporary directory.
         with open(directory + '/output.log', 'wb') as output, open(directory + '/error.log', 'wb') as errors:
             process = subprocess.Popen(command, stdout=output, stderr=errors, start_new_session=True)
@@ -144,7 +184,7 @@ def download(job, url, config, proxy):
                 raise ValueError('网站要求登录、限制服务器访问或视频不可公开下载；未使用浏览器登录凭据。')
             raise ValueError('网站解析或下载失败；此链接可能不可公开访问，或解析器需要更新。')
         file = pathlib.Path(directory + '/video.mp4')
-        info = json.loads(pathlib.Path(directory + '/output.log').read_text(errors='replace').strip().splitlines()[-1])
+        info = json.loads(pathlib.Path(directory + '/info.json').read_text(errors='replace'))
         config['_source_id']=str(info.get('id') or '')[:100]
         title = naming.webpage_name(info,validate_https(url).hostname.endswith('iwara.tv'))
         finish_file(job, file, title, 'video/mp4', config)

@@ -29,6 +29,10 @@
 
 1. 从 [Releases](https://github.com/kj1534/luker-video-toolkit/releases) 下载对应版本的 `video-toolkit-node-<version>.tar.gz` 和 `SHA256SUMS`，校验后解压。
 2. 将 `node/config.example.json` 复制为 `/etc/video-toolkit/node.json`，按实际路径修改。生成强随机控制令牌，存入 `token_file`；将同一令牌填写到 Luker 设置页面对应节点的“控制令牌”。
+
+   `parser_proxies` 可分别指定 Iwara、B站和 YouTube 的本地 HTTP/SOCKS
+   代理。Iwara与B站仅在解析阶段使用对应代理，媒体地址由处理节点直接下载；
+   YouTube 的解析与下载使用同一个代理，以避免签名媒体地址因出口变化而失效。
 3. 若启用小视频直链，配置 copyparty 专用读写账号、卷地址、密码文件和保留时间。专用账号只授权临时导入卷，不需要管理所有文件。示例卷：
    `/srv/video-imports:/imports:g:rw,video-import:c,e2d:c,fk=16:c,lifetime=259200:c,rm_partial`
    `g` 允许持有 filekey 的外部读取；不要给匿名用户列目录权限。
