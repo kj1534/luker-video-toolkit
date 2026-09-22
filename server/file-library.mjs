@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto';
 import { fileInfo, createVideoAttachment } from '../media.js';
 import { isAdmin } from './settings.mjs';
 
+export function fileCopyKey(user, file, destination = 'gcs', target = {}) {
+    return createHash('sha256').update(JSON.stringify([user, file.storage, file.worker_id, file.volume, file.path || file.url, file.size, file.generation || file.modified, [destination, target.worker_id, target.volume]])).digest('hex');
+}
+
 export function registerFileLibrary(router, dependencies) {
     const { config, worker, storage, startJob, catalog, copyFile, forgetCatalog } = dependencies;
     const enrich = item => ({ ...item, ...fileInfo(item.title || item.url) });
@@ -42,10 +46,9 @@ export function registerFileLibrary(router, dependencies) {
         throw new Error('文件来源无效。');
     }
     function readCopies() { return fs.existsSync(copyFile) ? JSON.parse(fs.readFileSync(copyFile, 'utf8')) : {}; }
-    const copyKey = (user, file, target) => createHash('sha256').update(JSON.stringify([user, file.storage, file.worker_id, file.volume, file.path || file.url, file.size, file.generation || file.modified, target])).digest('hex');
     async function promote(request, file, destination = 'gcs', target = {}) {
         const user = request.user.profile.handle;
-        const key = copyKey(user, file, [destination, target.worker_id, target.volume]);
+        const key = fileCopyKey(user, file, destination, target);
         if (destination === 'gcs') {
             const existing = readCopies()[key];
             if (existing) { try { return { file: await storage().stat(existing, user), reused: true }; } catch {} }
@@ -57,7 +60,7 @@ export function registerFileLibrary(router, dependencies) {
             if (file.storage !== 'gcs') throw new Error('请选择 GCS 文件复制到共享目录。');
             url = (await storage().access(file.url, user, true)).url;
         } else if (file.storage === 'gcs') return { file };
-        const job = await startJob(user, workerId, url, { destination, volume: target.volume, filename: file.title, copyKey: destination === 'gcs' ? key : undefined });
+        const job = await startJob(user, workerId, url, { destination, volume: target.volume, filename: file.title, copyKey: destination === 'gcs' ? key : undefined, originGcs: destination === 'copyparty' ? file.url : undefined, copyVolume: target.volume });
         return { job };
     }
     router.get('/file-sources', endpoint(sources));

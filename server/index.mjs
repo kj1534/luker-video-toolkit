@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { validateVideo, createRelay } from './relay.mjs';
 import { createStorage } from './storage.mjs';
 import { createImportWorkers } from './workers.mjs';
-import { registerFileLibrary } from './file-library.mjs';
+import { registerFileLibrary, fileCopyKey } from './file-library.mjs';
 import { fileInfo } from '../media.js';
 import { loadConfig, visibleSettings, prepareSettings, commitSettings, isAdmin, allowsModel } from './settings.mjs';
 
@@ -35,12 +35,27 @@ async function worker(workerId, route, body) {
 }
 
 
-function completeDirectImport(entry, job) {
+async function completeDirectImport(entry, job) {
     if (['complete', 'failed'].includes(job.status)) entry.finished = true;
-    if (job.status === 'complete' && entry.copyKey && entry.video?.url?.startsWith('gs://')) {
-        const copies = fs.existsSync(copyFile) ? JSON.parse(fs.readFileSync(copyFile, 'utf8')) : {};
-        copies[entry.copyKey] = entry.video.url;
-        fs.writeFileSync(copyFile + '.tmp', JSON.stringify(copies), {mode:0o600}); fs.renameSync(copyFile + '.tmp', copyFile);
+    if (job.status === 'complete' && !entry.copyRecorded) {
+        let key = entry.copyKey;
+        let uri = entry.video?.url;
+        if (entry.originGcs && job.video?.url) {
+            const roots = await worker(entry.workerId, '/library/roots');
+            const root = roots.volumes.find(item=>item.id===entry.copyVolume);
+            if (!root) throw new Error('目标目录已移除，无法登记副本。');
+            const base = new URL(root.public_url); const url = new URL(job.video.url);
+            const prefix = base.pathname.replace(/\/?$/, '/');
+            if (url.origin !== base.origin || !url.pathname.startsWith(prefix)) throw new Error('副本路径不在目标目录内。');
+            const file = await worker(entry.workerId, '/library/file', {volume:entry.copyVolume,path:decodeURIComponent(url.pathname.slice(prefix.length))});
+            key = fileCopyKey(entry.user,{...file,worker_id:entry.workerId}); uri = entry.originGcs;
+        }
+        if (key && uri?.startsWith('gs://')) {
+            const copies = fs.existsSync(copyFile) ? JSON.parse(fs.readFileSync(copyFile,'utf8')) : {};
+            copies[key] = uri;
+            fs.writeFileSync(copyFile+'.tmp',JSON.stringify(copies),{mode:0o600});fs.renameSync(copyFile+'.tmp',copyFile);
+        }
+        entry.copyRecorded = true;
     }
     if (job.status !== 'complete' || !job.video) return false;
     if (!entry.submitted) {
@@ -75,10 +90,10 @@ async function startJob(user, workerId, source, options = {}) {
     if (options.copyKey) for (const [id, entry] of importJobs) {
         if (entry.user === user && entry.copyKey === options.copyKey && !entry.finished && !entry.error) return {id, worker_id:entry.workerId};
     }
-    const {copyKey, ...body} = options;
+    const {copyKey, originGcs, copyVolume, ...body} = options;
     const job = await worker(workerId, '/jobs', { source_url:source, ...body });
     const id = `${workerId}:${job.id}`;
-    importJobs.set(id, {user, workerId, remoteId:job.id, created:Date.now(), copyKey});
+    importJobs.set(id, {user, workerId, remoteId:job.id, created:Date.now(), copyKey, originGcs, copyVolume});
     return {id, worker_id:workerId};
 }
 
@@ -176,7 +191,7 @@ export function init(router) {
             if (!entry || entry.user !== request.user?.profile?.handle) return response.sendStatus(404);
             if (entry.error) return response.json({ status: 'failed', error: entry.error, worker_id: entry.workerId });
             const job = await worker(entry.workerId, `/jobs/${encodeURIComponent(entry.remoteId)}`);
-            completeDirectImport(entry, job);
+            await completeDirectImport(entry, job);
             response.json({ ...job, worker_id: entry.workerId, video: entry.video });
         } catch { response.status(502).json({ error: '暂时无法读取导入进度，请稍后刷新视频列表。' }); }
     });
@@ -212,7 +227,7 @@ export function init(router) {
                 (async () => {
                     const job = await worker(entry.workerId, `/jobs/${encodeURIComponent(entry.remoteId)}`);
                     entry.failures = 0;
-                    if (completeDirectImport(entry, job)) return;
+                    if (await completeDirectImport(entry, job)) return;
                     if (job.status === 'failed') { entry.error = job.error || '网站解析失败。'; return; }
                     if (entry.video && ['queued', 'running', 'complete'].includes(job.status)) { entry.submitted = true; return; }
                     if (job.status !== 'ready') return;

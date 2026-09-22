@@ -38,7 +38,7 @@ test('large shared attachments promote once; small files use their existing dire
 });
 test('GCS to copyparty copy is pulled by the selected destination node',async t=>{
     const f=fixture(t);const result=await f.request('POST','/file-transfer',{file:f.gcs,destination:'copyparty',target:{worker_id:'primary',volume:'files'}},true);
-    assert.equal(result.status,200);assert.equal(f.jobs[0].id,'primary');assert.equal(f.jobs[0].url,'https://storage.googleapis.com/signed-fixture');assert.equal(f.jobs[0].options.destination,'copyparty');
+    assert.equal(result.status,200);assert.equal(f.jobs[0].id,'primary');assert.equal(f.jobs[0].url,'https://storage.googleapis.com/signed-fixture');assert.equal(f.jobs[0].options.destination,'copyparty');assert.equal(f.jobs[0].options.originGcs,f.gcs.url);assert.equal(f.jobs[0].options.copyVolume,'files');
 });
 test('PDF, images, audio and text use native fileData MIME types; arbitrary files remain storage-only',()=>{
     for(const [name,type] of [['report.pdf','application/pdf'],['image.png','image/png'],['audio.mp3','audio/mpeg'],['notes.md','text/plain']])assert.equal(createVideoAttachment('gs://private-bucket/videos/alice/'+name).mime_type,type);
