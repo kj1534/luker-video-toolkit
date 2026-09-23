@@ -1,6 +1,6 @@
 import {fileInfo} from './media.js';
 import {uploadResumable,uploadToNode,fileFingerprint} from './upload.js';
-export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT, queueVideo, getPending = ()=>null, mount, createSettingsPanel}) {
+export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT, queueVideo, getPending = ()=>null, mount, createSettingsPanel, onAttachLink, onConnect}) {
     let config;
     const pending=getPending();
     config = await (await fetch(`${API}/config`, { headers: context().getRequestHeaders() })).json();
@@ -339,7 +339,14 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
         body.addClass('gcs-tab-panel').attr({ role: 'tabpanel', id: `gcs-panel-${id}`, 'aria-labelledby': `gcs-tab-${id}` });
         pages.set(id, { button, body }); tabs.append(button); panel.append(body);
     }
-    panel.append($('<header class="gcs-library-header">').append($('<div>').append($('<h3>').text('文件库'), $('<p class="gcs-muted">').text(queueVideo?'浏览文件，按需附加到本轮对话。':'统一管理文件与后台任务。'))), tabs);
+    const header=$('<header class="gcs-library-header">').append($('<div>').append($('<h3>').text('文件库'), $('<p class="gcs-muted">').text(queueVideo?'浏览文件，按需附加到本轮对话。':'统一管理文件与后台任务。')));
+    if (onAttachLink || onConnect) {
+        const actions=$('<div class="gcs-library-actions">');
+        if (onAttachLink) actions.append($('<button type="button" class="menu_button">').text('添加文件链接到本轮').on('click',onAttachLink));
+        if (onConnect) actions.append($('<button type="button" class="menu_button">').text('连接或更换账号').on('click',onConnect));
+        header.append(actions);
+    }
+    panel.append(header,tabs);
     const libraryPanel = $('<section>').append($('<div class="gcs-library-toolbar">').append(search, sourceSelect, filter, refreshButton),
         $('<div class="gcs-library-summary">').append(count), breadcrumbs, libraryStatus, list,
         $('<footer class="gcs-list-footer">').append(more, $('<div class="gcs-pagination">').append(previous, pageLabel, next)));

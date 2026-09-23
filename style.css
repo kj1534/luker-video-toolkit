@@ -8,6 +8,7 @@
 .gcs-video-manager h3, .gcs-video-manager h4, .gcs-video-manager p { margin:0; }
 .gcs-video-manager .gcs-muted { font-size:.85rem; opacity:.72; line-height:1.5; }
 .gcs-library-header { padding:4px 0 18px; }
+.gcs-library-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .gcs-library-header h3 { font-size:1.3rem; margin-bottom:4px; }
 .gcs-tabs { display:flex; gap:20px; border-bottom:1px solid var(--gcs-line); margin-bottom:16px; }
 .gcs-tabs button { appearance:none; background:none; color:inherit; border:0; border-bottom:2px solid transparent; padding:10px 0; cursor:pointer; opacity:.65; font:inherit; transition:opacity .15s, border-color .15s; }

@@ -8,7 +8,7 @@ The independent application owns storage settings and task state. Luker installs
 2. Create a dedicated unprivileged service user and a private state directory (700; files 600). Copy `server/config.example.json` to this directory and supply only a bucket-restricted uploader credential. Add `public_url`, `app_port` and `retention_days` as described in [operations](independent-app.md).
 3. Initialize an account with `node scripts/create-account.mjs --config /private/config.json --handle owner --admin`. It writes a generated first-login password to a private file and does not print it. Never check this file into Git.
 4. Run `sudo python3 scripts/install-app.py --source /opt/file-library --config /private/config.json --node /absolute/node --user file-library` after setting state ownership to the service user. Add the unchanged application URL path to your existing HTTPS reverse proxy with a 256 KiB request limit. Do not open public origin ports to bypass a Tunnel.
-5. Sign in, configure/test nodes and storage, create a user-scoped plugin token, then paste it into Luker's **Connect independent file library** dialog. The host operator configures the trusted `service_url` in `config/gcs-video/connection.json`; ordinary users cannot select arbitrary control servers.
+5. Sign in, configure/test nodes and storage, create a user-scoped plugin token, then open Luker's **File library** menu entry and paste it into the connection dialog. The host operator configures the trusted `service_url` in `config/gcs-video/connection.json`; ordinary users cannot select arbitrary control servers.
 
 ## Upgrade from 0.7
 
@@ -22,7 +22,7 @@ Migrate while the previous task queue is idle. Existing bytes, object names, GS 
 
 ## 安装 Luker 连接器
 
-使用 Luker 官方的服务端插件和前端扩展入口安装同一个仓库：`https://github.com/kj1534/luker-video-toolkit`。两侧保持同一版本，启用服务端插件后按 Luker 提示重启。宿主配置 `config/gcs-video/connection.json` 的 `service_url`，用户通过附件菜单的“连接独立文件库”绑定自己的专用令牌。
+使用 Luker 官方的服务端插件和前端扩展入口安装同一个仓库：`https://github.com/kj1534/luker-video-toolkit`。两侧保持同一版本，启用服务端插件后按 Luker 提示重启。宿主配置 `config/gcs-video/connection.json` 的 `service_url`，用户通过附件菜单的“文件库”入口绑定自己的专用令牌；连接后，上传、链接导入、文件附加及更换连接都在同一入口内。
 
 全部存储、节点和凭据配置在独立应用的设置页维护。连接器不再持有 GCS 上传凭据和节点控制令牌。
 

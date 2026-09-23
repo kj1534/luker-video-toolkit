@@ -94,7 +94,9 @@ function readCatalog() {
     return fs.existsSync(catalogFile) ? JSON.parse(fs.readFileSync(catalogFile, 'utf8')) : {};
 }
 function readDirectVideos(handle) {
-    return (readCatalog()[handle] || []).filter(video => Date.parse(video.expires) > Date.now());
+    const catalog = readCatalog();
+    const owners = [handle, ...(config.owner_grants?.[handle] || [])];
+    return owners.flatMap(owner => catalog[owner] || []).filter(video => Date.parse(video.expires) > Date.now());
 }
 function forgetCatalog(url) {
     const data = readCatalog();

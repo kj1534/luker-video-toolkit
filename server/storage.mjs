@@ -43,10 +43,17 @@ export function createStorage(config, fetchImpl) {
     async function authorized(url, options = {}) {
         return fetchImpl(url, { ...options, headers: { ...options.headers, Authorization: `Bearer ${await accessToken()}` }, signal: AbortSignal.timeout(30000) });
     }
+    function allowedOwners(handle) {
+        const additional = config.owner_grants?.[handle] || [];
+        if (!Array.isArray(additional) || additional.some(owner => typeof owner !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(owner))) throw new Error('Invalid owner grant');
+        return [...new Set([handle, ...additional])];
+    }
     function ownedName(uri, handle) {
-        const prefix = `gs://${config.bucket}/${userPrefix(handle)}`;
-        if (typeof uri !== 'string' || !uri.startsWith(prefix)) throw new Error('只能管理自己上传的 GCS 文件。');
-        return uri.slice(`gs://${config.bucket}/`.length);
+        const prefix = `gs://${config.bucket}/`;
+        if (typeof uri !== 'string' || !uri.startsWith(prefix)) throw new Error('只能管理获授权的 GCS 文件。');
+        const name = uri.slice(prefix.length);
+        if (!allowedOwners(handle).some(owner => name.startsWith(userPrefix(owner)))) throw new Error('只能管理获授权的 GCS 文件。');
+        return name;
     }
     function entry(object) {
         return { url: `gs://${config.bucket}/${object.name}`, title: object.metadata?.original_name || object.name.split('/').pop(),
@@ -101,7 +108,7 @@ export function createStorage(config, fetchImpl) {
             const prefix = `gs://${config.bucket}/`;
             if (!uri.startsWith(prefix)) throw new Error('Wrong bucket');
             const name = uri.slice(prefix.length);
-            if (!name.startsWith(userPrefix(handle))) return { duration_seconds: null };
+            if (!allowedOwners(handle).some(owner => name.startsWith(userPrefix(owner)))) return { duration_seconds: null };
             const url = new URL(`https://storage.googleapis.com/storage/v1/b/${config.bucket}/o/${encodeURIComponent(name)}`);
             url.searchParams.set('fields', 'metadata,size');
             const response = await authorized(url.href);
@@ -110,15 +117,27 @@ export function createStorage(config, fetchImpl) {
             return { duration_seconds: Number(data.metadata?.duration_seconds) || null, size: Number(data.size) };
         },
         async list(handle, pageToken = '') {
+            const owners = allowedOwners(handle);
+            let index = 0;
+            let cursor = '';
+            if (pageToken) {
+                const state = JSON.parse(Buffer.from(pageToken, 'base64url').toString('utf8'));
+                if (!Number.isInteger(state.index) || state.index < 0 || state.index >= owners.length || typeof state.cursor !== 'string') throw new Error('Invalid page token');
+                index = state.index; cursor = state.cursor;
+            }
+            for (; index < owners.length; index++, cursor = '') {
             const url = new URL(`https://storage.googleapis.com/storage/v1/b/${config.bucket}/o`);
-            url.searchParams.set('prefix', userPrefix(handle));
+            url.searchParams.set('prefix', userPrefix(owners[index]));
             url.searchParams.set('maxResults', '100');
-            if (pageToken) url.searchParams.set('pageToken', pageToken);
+            if (cursor) url.searchParams.set('pageToken', cursor);
             url.searchParams.set('fields', 'items(name,size,timeCreated,metadata,contentType,generation),nextPageToken');
             const response = await authorized(url.href);
             if (!response.ok) throw new Error('无法读取 GCS 视频列表。');
             const data = await response.json();
-            return { items: (data.items ?? []).map(entry).sort((a, b) => b.created.localeCompare(a.created)), nextPageToken: data.nextPageToken || '' };
+            const next = data.nextPageToken ? {index,cursor:data.nextPageToken} : index+1 < owners.length ? {index:index+1,cursor:''} : null;
+            if (data.items?.length || next === null) return { items: (data.items ?? []).map(entry).sort((a, b) => b.created.localeCompare(a.created)), nextPageToken: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : '' };
+            }
+            return {items:[],nextPageToken:''};
         },
     };
 }

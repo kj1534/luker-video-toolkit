@@ -13,3 +13,10 @@ Workers use native copyparty up2k for both GCS readback and downloaded-file sync
 Validation: existing attachment/storage tests, CSRF/token revocation, independent UI navigation, small/large automatic upload placement and explicit dual copies; two real transfers above 100 MiB with full SHA256 verification, including one interrupted native-chunk upload with only missing chunks retransmitted; official YouTube short-link import and active-task selector exclusion. Site availability still depends on the configured node and the source site's current access policies.
 
 Upgrade both official Luker components together and migrate each user to its original storage prefix. See [installation](installation.md) and [operations](independent-app.md).
+# 1.0.2
+
+The Luker attachment menu now has one File Library entry. It opens the existing browser, upload, import, task and attachment tools; connection and direct-link attachment are available there, and an invalid old connection prompts for a new user token.
+
+The independent app accepts explicit private owner grants for account transfers. A granted user can list and use objects under the previous owner's GCS prefix and see its unexpired direct-link catalog entries. New uploads stay under the new user's prefix; original object URIs and bytes are unchanged. Grants are configured only in the private application JSON, not exposed through the browser settings form. The old account can remain disabled with no tokens.
+
+Validation: owner-grant authorization and pagination checks, file-library/settings tests, and production account/index verification. The independent application's visual redesign is left to the next frontend iteration.

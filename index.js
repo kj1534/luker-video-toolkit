@@ -8,7 +8,24 @@ let pending = null;
 const context = () => globalThis.Luker.getContext();
 const durationLabel = value => value > 0 ? `${Math.round(value)} 秒` : '时长未知';
 
-async function showVideoManager() { config=await(await fetch(API+'/config',{headers:context().getRequestHeaders()})).json(); return showLibrary({API,context,Popup,POPUP_TYPE,POPUP_RESULT,queueVideo,getPending:()=>pending}); }
+async function connectLibrary() {
+    const state=await (await fetch(API+'/connection',{headers:context().getRequestHeaders()})).json();
+    const token=$('<input type="password" class="text_pole" autocomplete="off" placeholder="粘贴专用插件令牌">');
+    const body=$('<div>').append($('<h3>').text('连接独立文件库'),$('<a target="_blank" rel="noopener noreferrer">').attr('href',state.app_url).text('打开独立应用，登录后生成专用令牌'),token);
+    if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'连接',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return false;
+    const response=await fetch(API+'/connection',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({token:token.val()})});
+    token.val('');const data=await response.json();if(!response.ok)throw Error(data.error || '连接失败。');
+    toastr.success('已连接独立文件库。');return true;
+}
+async function showVideoManager() {
+    const response=await fetch(API+'/config',{headers:context().getRequestHeaders()});
+    if(!response.ok){
+        if(response.status!==401||!await connectLibrary())return;
+        return showVideoManager();
+    }
+    config=await response.json();
+    return showLibrary({API,context,Popup,POPUP_TYPE,POPUP_RESULT,queueVideo,getPending:()=>pending,onAttachLink:()=>showAttachDialog().catch(error=>toastr.error(error.message)),onConnect:()=>connectLibrary().catch(error=>toastr.error(error.message))});
+}
 
 function renderPending() {
     $('#gcs-video-pending').remove();
@@ -145,22 +162,11 @@ jQuery(async () => {
     try {
         const response = await fetch(`${API}/config`, { headers: context().getRequestHeaders() });
         config = response.ok ? await response.json() : {models:[],direct_media_origins:[]};
-        $('<div class="list-group-item">').text('连接独立文件库').on('click',async()=>{
-            const state=await (await fetch(API+'/connection',{headers:context().getRequestHeaders()})).json();
-            const token=$('<input type="password" class="text_pole" autocomplete="off" placeholder="粘贴专用插件令牌">');
-            const body=$('<div>').append($('<h3>').text('连接独立文件库'),$('<a target="_blank" rel="noopener noreferrer">').attr('href',state.app_url).text('打开独立应用，登录后生成专用令牌'),token);
-            if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'连接',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return;
-            const r=await fetch(API+'/connection',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({token:token.val()})});token.val('');const data=await r.json();if(!r.ok)return toastr.error(data.error);config=await(await fetch(API+'/config',{headers:context().getRequestHeaders()})).json();toastr.success('已连接独立文件库。');
-        }).appendTo('#attach_file_wand_container');
         const ctx = context();
-        $('<div class="list-group-item flex-container flexGap5" id="gcs-video-attach">').append(
-            $('<div class="fa-fw fa-solid fa-video extensionsMenuExtensionButton">'),
-            $('<span>').text('添加文件链接（仅本轮）'),
-        ).on('click', showAttachDialog).appendTo('#attach_file_wand_container');
         $('<div class="list-group-item flex-container flexGap5" id="gcs-video-library">').append(
             $('<div class="fa-fw fa-solid fa-cloud-arrow-up extensionsMenuExtensionButton">'),
-            $('<span>').text('文件库：上传与管理'),
-        ).on('click', showVideoManager).appendTo('#attach_file_wand_container');
+            $('<span>').text('文件库'),
+        ).on('click', () => showVideoManager().catch(error=>toastr.error(error.message))).appendTo('#attach_file_wand_container');
         ctx.eventSource.on(ctx.eventTypes.MESSAGE_SENT, captureUserMessage);
         for (const event of [ctx.eventTypes.USER_MESSAGE_RENDERED, ctx.eventTypes.MESSAGE_UPDATED]) {
             ctx.eventSource.on(event, renderMessage);

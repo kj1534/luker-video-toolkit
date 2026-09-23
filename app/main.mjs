@@ -10,7 +10,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const prefix=new URL(settings.public_url).pathname.replace(/\/$/,'');
 const app=express();app.disable('x-powered-by');app.set('trust proxy','loopback');
 app.use((req,res,next)=>{res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: blob:; media-src https: blob:; connect-src 'self' https:; frame-src https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});next();});
-app.get(prefix+'/healthz',(req,res)=>res.json({ok:true,version:'1.0.1'}));
+app.get(prefix+'/healthz',(req,res)=>res.json({ok:true,version:'1.0.2'}));
 const api=express.Router();api.use(express.json({limit:'256kb'}));
 const auth=createAuth(path.join(path.dirname(configFile),'accounts.json'),settings);auth.register(api);
 const core=createLibrary(api,configFile);await core.ready;
@@ -25,5 +25,5 @@ app.get(prefix+'/jquery.js',(req,res)=>res.sendFile(path.join(root,'node_modules
 app.use(prefix,express.static(path.join(root,'app/public'),{index:'index.html',dotfiles:'deny'}));
 app.get(prefix,(req,res)=>res.redirect(prefix+'/'));
 app.use((err,req,res,next)=>res.status(400).json({error:'请求无效。'}));
-const server=app.listen(settings.app_port||3930,'127.0.0.1',()=>console.info('File Library 1.0.1 ready'));
+const server=app.listen(settings.app_port||3930,'127.0.0.1',()=>console.info('File Library 1.0.2 ready'));
 process.on('SIGTERM',()=>{core.close();server.close(()=>process.exit());});
