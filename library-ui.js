@@ -13,28 +13,33 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
     const uploadMode = $('<select class="text_pole" aria-label="上传保存方式">');
     function refreshUploadModes() {
         uploadMode.empty();
-    for (const [id,label] of [['auto','自动：小文件仅 copyparty，大文件两边各一份'],['copyparty','仅 copyparty：用于播放、下载'],['both','copyparty + GCS：两边各保存一份'],['gcs','仅 GCS：浏览器直接上传 Google']]) if(config.local_upload_available || id==='gcs') uploadMode.append($('<option>').val(id).text(label));
+        for (const [id,label] of [
+            ['auto','智能模式（推荐）：小文件存节点快速流转，超大文件自动转存 GCS 云端'],
+            ['copyparty','仅节点存储：保存在 copyparty 节点（约 7 天），不上传 GCS 云端'],
+            ['both','双端存储：节点与 GCS 云端各存一份（通常保留约 7 天）'],
+            ['gcs','仅 GCS 云端：由浏览器直接上传至 Google 存储桶（保留约 7 天）']
+        ]) if(config.local_upload_available || id==='gcs') uploadMode.append($('<option>').val(id).text(label));
     }
     refreshUploadModes();
-    const uploadPlan = $('<p class="gcs-muted">');
+    const uploadPlan = $('<p class="gcs-muted" style="margin-top:2px;">');
     function describeUpload() {
         const mode=uploadMode.val(),size=selectedFile?.size;
         const double=mode==='both'||(mode==='auto'&&size>config.https_max_bytes);
-        const plan=mode==='gcs'?'浏览器 → GCS，仅存一份。以后预览或下载时会先复制到 copyparty。':`浏览器只上传一份到 ${config.copyparty_label || 'copyparty'}。`+(double?'保存到 copyparty 后，由该节点上传 GCS，最终两边各一份。':mode==='auto'&&size===undefined?`不超过 ${(config.https_max_bytes/1000000).toFixed(1)} MB 仅存 copyparty，更大文件由节点再上传 GCS。`:'仅保存到 copyparty；以后附加较大文件时才上传 GCS。');
+        const plan=mode==='gcs'?'浏览器直传至 Google Cloud Storage，仅存云端（通常保留约 7 天）。后续在线预览或下载时将由中继节点拉取缓存。':`浏览器先上传一份至节点 ${config.copyparty_label || '存储'}（通常保留约 7 天）。`+(double?'保存成功后，由后台节点转存至 GCS 云端，两端各存一份（两处均受 7 天自动清理策略约束）。':mode==='auto'&&size===undefined?`体积不超过 ${(config.https_max_bytes/1000000).toFixed(1)} MB 仅存节点快速流转；更大文件将由后台节点自动转存至 GCS 云端。`:'仅保存在节点存储；后续如需附加超大附件至 AI 对话时再按需转存至 GCS。');
         uploadPlan.text(plan);
     }
     uploadMode.on('change',describeUpload);
-    const upload = $('<button type="button" class="menu_button">').text('上传 / 继续');
-    const pause = $('<button type="button" class="menu_button">').text('暂停').prop('disabled', true);
-    const fresh = $('<button type="button" class="menu_button">').text('放弃续传，重新上传');
+    const upload = $('<button type="button" class="menu_button gcs-primary">').text('开始 / 继续上传');
+    const pause = $('<button type="button" class="menu_button">').text('暂停传输').prop('disabled', true);
+    const fresh = $('<button type="button" class="menu_button gcs-subtle">').text('重置上传进度');
     const list = $('<div class="gcs-video-list" aria-label="文件列表">');
-    const importUrl = $('<input class="text_pole" placeholder="粘贴文件直链、Iwara、B站、YouTube 或 HTTPS 短链接">');
-    const importWorker = $('<select class="text_pole" aria-label="导入节点">');
+    const importUrl = $('<input class="text_pole" placeholder="输入或粘贴媒体链接（支持 B站 / YouTube / Iwara / 外部直接下载链接）">');
+    const importWorker = $('<select class="text_pole" aria-label="负责解析下载的节点">');
     for (const worker of config.import_workers) importWorker.append($('<option>').val(worker.id).text(worker.label+(worker.online===false?' · 离线':worker.sites?' · '+worker.sites.join('/') : '')));
     importWorker.val(config.default_import_worker);
     const syncCopyparty = $('<input type="checkbox">').prop('checked',config.admin);
-    const syncLabel = $('<label class="gcs-checkbox">').append(syncCopyparty, ' 同时保存到 copyparty（供播放和下载）').toggle(config.admin);
-    const importButton = $('<button type="button" class="menu_button">').text('开始导入');
+    const syncLabel = $('<label class="gcs-checkbox">').append(syncCopyparty, ' 同时保存一份至节点文件库（通常保留约 7 天，便于节点直连播放）').toggle(config.admin);
+    const importButton = $('<button type="button" class="menu_button gcs-primary">').text('开始后台解析与导入');
     const importStatus = $('<div role="status" class="gcs-import-status">');
     let polling = true;
     const more = $('<button type="button" class="menu_button">').text('加载更多').hide();
@@ -102,16 +107,16 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
             finally { await reader.cancel(); }
             media.text(text + decoder.decode() + (truncated ? '\n…仅预览前 1 MiB，请下载查看完整内容。' : ''));
         } else media = $('<p>').text('此格式暂不支持在线预览，可以下载后打开。');
-        body.append(media, $('<p class="gcs-muted">').text(file.storage === 'gcs' ? '临时访问链接有效期 15 分钟；播放和下载按实际读取流量计费。' : '文件由 copyparty 直接提供，保留时间以目录策略为准。'));
+        body.append(media, $('<p class="gcs-muted">').text(file.storage === 'gcs' ? '临时访问链接有效期 15 分钟；播放与下载通过中继节点拉取并计费，文件通常保留约 7 天。' : '文件由远端 copyparty 节点直接提供，播放消耗节点网络带宽，通常保留约 7 天。'));
         await new Popup(body, POPUP_TYPE.TEXT, '', {wide:true,large:true,okButton:'关闭'}).show();
         if (file.type === 'video' || file.type === 'audio') {media[0].pause();media.removeAttr('src');media[0].load();}
     }
     async function accessibleFile(file,download=false) {
-        if(file.storage==='gcs' && !await confirmOperation(download?'下载到本机':'预览文件','先使用 copyparty 中已有的有效副本；没有副本时，由 GCS 读取节点复制到 copyparty，再从 copyparty '+(download?'下载到本机。':'播放或预览。')+'复制会产生节点流量，GCS 原文件保留。')) return null;
+        if(file.storage==='gcs' && !await confirmOperation(download?'云端文件下载调取确认':'云端文件在线播放确认','该文件当前仅保存在 GCS 云端。为确保播放与传输稳定，系统将优先复用节点已有缓存；若节点尚无缓存，中继节点将先从云端拉取一份至节点暂存（原 GCS 文件不受影响），再进行'+(download?'下载到本机。':'在线预览播放。')+'确认继续？')) return null;
         const result = await api('/file-access',{file,download});
         if (result.url) return result;
         const copied = await completeTask(result);
-        if (!copied) throw new Error('尚未完成 copyparty 复制，请稍后重试。');
+        if (!copied) throw new Error('尚未完成节点转存，请稍后重试。');
         return api('/file-access',{file:copied,download});
     }
     async function downloadFile(file) {
@@ -120,33 +125,33 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
         const link = $('<a>').attr({href:data.url,download:file.title,target:'_blank',rel:'noopener noreferrer'}).appendTo(panel);link[0].click();link.remove();
     }
     async function deleteFile(file) {
-        const body = $('<div>').append($('<h3>').text(`删除 ${file.storage==='gcs'?'GCS':'copyparty'} 中这一份？`), $('<p>').text(file.title), $('<p>').text('将删除当前存储中的文件，另一存储的副本不受影响。引用这一地址的历史附件可能失效。'));
-        if (await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'删除文件',cancelButton:'取消'}).show() !== POPUP_RESULT.AFFIRMATIVE) return;
-        await api('/file-delete',{file});await refresh();notifyLibrary('已删除所选存储中的这一份文件。');
+        const body = $('<div>').append($('<h3>').text(`确认从 ${file.storage==='gcs'?'GCS 云端':'节点存储'} 中删除此副本？`), $('<p style="font-weight:600;word-break:break-all;margin:8px 0;">').text(file.title), $('<p class="gcs-muted">').text('提示：本次操作仅从所选存储位置中移除该副本，另一存储中的副本不受影响。注意：两端文件通常均受 7 天自动保留策略约束。'));
+        if (await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'确认删除该副本',cancelButton:'取消'}).show() !== POPUP_RESULT.AFFIRMATIVE) return;
+        await api('/file-delete',{file});await refresh();notifyLibrary('已成功删除当前存储中的文件副本。');
     }
     async function completeTask(result, attach = false) {
         let file = result.file;
         if (result.job) { sessionStorage.setItem(importKey,result.job.id); const job = await pollImport(result.job.id,libraryStatus); file = job?.video; }
-        if (attach && polling && file) {queueVideo(file.url,file.duration_seconds,file.title);toastr.success('文件已附加到本轮。');renderList();}
-        else if (file) notifyLibrary(result.reused ? '已使用现有副本，没有重复传输。' : '操作完成。');
+        if (attach && polling && file) {queueVideo(file.url,file.duration_seconds,file.title);toastr.success('文件已成功附加至当前对话。');renderList();}
+        else if (file) notifyLibrary(result.reused ? '已成功复用现有副本，无需重复传输。' : '操作已完成。');
         return file;
     }
     async function attachFile(file) {
         const limit=file.type==='image'?Math.min(7000000,config.https_max_bytes):config.https_max_bytes;
-        if(file.storage!=='gcs'&&file.size>limit&&!await confirmOperation('附加到本轮对话','这个文件超过直链大小限制。会复用已有 GCS 副本，或由存储节点上传到 GCS，再将 GCS 地址附加给 Gemini；copyparty 原文件保留。'))return;
+        if(file.storage!=='gcs'&&file.size>limit&&!await confirmOperation('大文件云端转存提示','该文件体积超出直接发送上限。系统将自动复用现有 GCS 云端副本，或由后台节点上传至 GCS 后再供 Gemini 读取分析。节点原文件将完好保留（均受 7 天保留策略约束）。'))return;
         await completeTask(await api('/file-attach',{file}),true);
     }
     async function copyFile(file) {
         let target;
         if (file.storage === 'gcs') {
-            const choices = sources.filter(item=>item.storage==='copyparty'); if (!choices.length) throw new Error('请先在设置中启用共享目录文件库。');
+            const choices = sources.filter(item=>item.storage==='copyparty'); if (!choices.length) throw new Error('请先在系统设置中启用共享目录文件库。');
             const select = $('<select class="text_pole">'); for (const item of choices) select.append($('<option>').val(item.id).text(item.label));
             const preferred = choices.find(item=>item.volume==='imports');if(preferred)select.val(preferred.id);
-            const body = $('<div class="gcs-video-dialog">').append($('<h3>').text('复制到 copyparty'),$('<p>').text('由配置的 GCS 读取节点经 Google 私有 API 读取，再保存到所选 copyparty 目录。原文件保留；之后播放使用 copyparty 副本。'),select);
-            if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'复制',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return;
+            const body = $('<div class="gcs-video-dialog">').append($('<h3>').text('转存云端文件至节点目录'),$('<p class="gcs-muted">').text('中继节点将通过 Google 私有 API 读取云端文件并保存至所选节点存储目录（保留时间受节点策略约束）。GCS 原文件保持不变。'),select);
+            if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'开始转存',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return;
             target=choices.find(item=>item.id===select.val());
         }
-        if(file.storage!=='gcs'&&!await confirmOperation('另存一份到 GCS','由存储节点上传，浏览器不再上传文件；已有有效 GCS 副本会直接复用。copyparty 原文件保留。'))return;
+        if(file.storage!=='gcs'&&!await confirmOperation('转存至 GCS 云端','将由后台节点直接上传至 GCS 存储桶，消耗节点带宽，不消耗您的设备流量；已有云端副本会自动直接复用。节点原文件完好保留（均受 7 天保留策略约束）。'))return;
         return await completeTask(await api('/file-transfer',{file,destination:file.storage==='gcs'?'copyparty':'gcs',target}));
     }
     sourceSelect.on('change',()=>{directory='';page=0;refresh();});
@@ -169,32 +174,75 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
         }
         const label=button.text();button.text('地址已复制');setTimeout(()=>button.text(label),1500);
     }
+    function typeIcon(type, isDir) {
+        if (isDir) {
+            return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13Z"/></svg>';
+        }
+        switch (type) {
+            case 'video':
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 8 7 4-7 4Z"/></svg>';
+            case 'audio':
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+            case 'image':
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+            case 'pdf':
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>';
+            case 'text':
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/></svg>';
+            default:
+                return '<svg class="gcs-inline-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>';
+        }
+    }
     function renderList() {
         const term = String(search.val()).trim().toLocaleLowerCase();
         const matches = videos.filter(video => (!term || video.title.toLocaleLowerCase().includes(term)) && (video.is_directory || filter.val() === 'all' || video.type === filter.val()));
         const pages = Math.max(1, Math.ceil(matches.length / pageSize)); page = Math.min(page, pages - 1);
         list.empty();
         count.text(`${videos.length} 个已加载${nextPage ? ' · 还有更多' : ''}${term || filter.val() !== 'all' ? ` · ${matches.length} 个匹配` : ''}`);
-        if (!matches.length) list.append(empty.text(videos.length ? '没有匹配的文件。试试其他名称或存储类型。' : '文件库还是空的。选择“上传文件”或“链接导入”开始。'));
+        if (!matches.length) {
+            list.append(empty.empty().append(
+                $('<div style="font-size:2.2rem;margin-bottom:10px;opacity:0.6;">').text(term ? '🔍' : '📂'),
+                $('<div>').text(videos.length ? '没有匹配的文件。试试其他关键词或存储来源。' : '文件库暂无文件。选择“上传文件”或“链接导入”开始。')
+            ));
+        }
         for (const video of matches.slice(page * pageSize, (page + 1) * pageSize)) {
             const action = (label, callback, primary = false) => $('<button type="button" class="menu_button">').toggleClass('gcs-primary',primary).text(label).on('click',async function(){const button=$(this);clearTimeout(noticeTimer);libraryStatus.empty();button.prop('disabled',true);try{await callback();}catch(error){libraryStatus.text(error.message);toastr.error(error.message);}finally{button.prop('disabled',false);}});
-            const main = $('<div class="gcs-video-main">').append($('<strong>').text((video.is_directory ? '▸ ' : '') + video.title).attr('title',video.title));
+            const main = $('<div class="gcs-video-main">').append(
+                $('<strong>').attr('title',video.title).append($(typeIcon(video.type, video.is_directory)), $('<span>').text(video.title))
+            );
             if (video.is_directory) {
-                main.append($('<div class="gcs-video-meta">').text(video.source_label || '文件夹'));
-                $('<article class="gcs-video-list-item">').append(main,action('打开',()=>navigate(video))).appendTo(list);continue;
+                main.append($('<div class="gcs-video-meta">').append($('<span class="gcs-storage-label gcs-storage-copyparty">').text(video.source_label || '文件夹')));
+                $('<article class="gcs-video-list-item">').append(main,action('打开目录',()=>navigate(video))).appendTo(list);continue;
             }
             const attachable = video.attachable ?? fileInfo(video.url).attachable;
             const limit = video.type==='image'?Math.min(7000000,config.https_max_bytes):config.https_max_bytes;
-            const attach = action(pending?.url===video.url?'已附加到本轮':'附加到本轮',()=>attachFile(video),true).prop('disabled',!attachable).attr('title',attachable?(video.storage==='gcs'?'将 GCS 地址交给 Gemini，不下载文件':video.size>limit?'复用或创建 GCS 副本后附加，保留 copyparty 文件':'直接附加 copyparty 地址，仅用于本轮'):'Gemini 不支持此格式，可以下载');
+            const attach = action(pending?.url===video.url?'✓ 已附加至本轮':'附加到本轮对话',()=>attachFile(video),true).prop('disabled',!attachable).attr('title',attachable?(video.storage==='gcs'?'向 Gemini 发送 GCS 云端引用，无需经过客户端重复下载':video.size>limit?'超大文件将转存至 GCS 云端后向 Gemini 发送引用，节点副本不受影响':'将节点文件直链附加至当前会话'):'Gemini 模型暂不支持该文件格式，可点击下载查看');
             const date=video.expires?`到期 ${new Date(video.expires).toLocaleDateString()}`:new Date(video.created).toLocaleDateString();
-            main.append($('<div class="gcs-video-meta">').append($('<span class="gcs-storage-label">').text(video.source_label || (video.storage==='gcs'?'GCS':'copyparty')), $('<span>').text(`${(video.size/1048576).toFixed(1)} MiB`),$('<span>').text(['video','audio'].includes(video.type)?formatDuration(video.duration_seconds):video.type?.toUpperCase()||'文件'),$('<span>').text(date)));
-            const copyLink=action(video.storage==='gcs'?'复制 gs:// 地址':'复制文件直链',()=>copyUrl(video.url,copyLink));
-            const menu=$('<details class="gcs-file-menu">').append($('<summary>').text('管理'),$('<div class="gcs-file-menu-actions">').append(action('下载到本机',()=>downloadFile(video)).attr('title',video.storage==='gcs'?'先复用或创建 copyparty 副本，再从副本下载':'从 copyparty 下载到你的设备').prop('disabled',video.storage==='gcs'&&!config.admin),copyLink,...(config.management && (video.storage!=='gcs'||config.admin)?[action(video.storage==='gcs'?'另存一份到 copyparty':'另存一份到 GCS',()=>copyFile(video))]:[])));
-            if(config.management && (video.storage==='gcs'||video.storage==='copyparty'))menu.find('.gcs-file-menu-actions').append(action('删除这一份',()=>deleteFile(video)));
-            menu.find('.gcs-file-menu-actions').append(action('操作说明',async()=>{
-                const body=$('<div>').append($('<h3>').text('这个文件的操作方式'),$('<p>').text(video.storage==='gcs'?'预览、下载：先复用或创建 copyparty 副本，再从副本读取。附加到本轮：直接把 gs:// 地址交给 Gemini。':'预览、下载：直接读取 copyparty 文件。附加到本轮：小文件用直链，大文件复用或上传 GCS 后附加。'),$('<p>').text('另存一份：保留原文件，已有有效副本会复用。删除这一份：只删除当前存储中的文件，不删除其他副本。复制地址：只复制链接，不传输文件。'));
-                await new Popup(body,POPUP_TYPE.TEXT,'',{okButton:'知道了'}).show();
-            }));
+            const storageClass = video.storage === 'gcs' ? 'gcs-storage-gcs' : 'gcs-storage-copyparty';
+            main.append($('<div class="gcs-video-meta">').append(
+                $(`<span class="gcs-storage-label ${storageClass}">`).text(video.source_label || (video.storage==='gcs'?'GCS 云端':'节点存储')),
+                $('<span>').text(`${(video.size/1048576).toFixed(1)} MiB`),
+                $('<span>').text(['video','audio'].includes(video.type)?formatDuration(video.duration_seconds):video.type?.toUpperCase()||'文件'),
+                $('<span>').text(date)
+            ));
+            const copyLink=action(video.storage==='gcs'?'复制云端 gs:// 引用':'复制节点访问直链',()=>copyUrl(video.url,copyLink));
+            const menu=$('<details class="gcs-file-menu">').append(
+                $('<summary>').text('更多操作'),
+                $('<div class="gcs-file-menu-actions">').append(
+                    action('下载到本机',()=>downloadFile(video)).attr('title',video.storage==='gcs'?'该云端文件将由中继节点拉取缓存后下载至本机':'从远端节点文件库下载至当前设备（产生网络流量）').prop('disabled',video.storage==='gcs'&&!config.admin),
+                    copyLink,
+                    ...(config.management && (video.storage!=='gcs'||config.admin)?[action(video.storage==='gcs'?'转存至节点存储':'转存至 GCS 云端',()=>copyFile(video))]:[]),
+                    ...(config.management && (video.storage==='gcs'||video.storage==='copyparty')?[$('<button type="button" class="menu_button danger">').text('删除当前存储副本').on('click',()=>deleteFile(video))]:[]),
+                    action('存储与副本说明',async()=>{
+                        const body=$('<div>').append(
+                            $('<h3>').text('文件副本与存储机制说明'),
+                            $('<p>').text(video.storage==='gcs'?'【GCS 云端存储】：当前文件保存在 Google 存储桶，通常保留约 7 天。预览与下载由中继节点拉取缓存；附加到 AI 对话时直接引用云端 gs:// 地址。':'【节点存储 (copyparty)】：当前文件保存在远端工作节点，通常保留约 7 天。预览与播放直连节点（消耗节点网络流量）；小文件直接附加直链，超大文件将自动转存至 GCS 云端。'),
+                            $('<p class="gcs-muted" style="margin-top:8px;">').text('• 存储转存：在另一存储端创建镜像副本，已有有效副本时自动复用，不重复传输。\n• 生命周期：两端文件均受约 7 天自动清理策略约束，请及时将重要文件下载到本机保存。\n• 删除当前存储副本：仅移除当前存储端的文件数据，另一端的副本保持独立。')
+                        );
+                        await new Popup(body,POPUP_TYPE.TEXT,'',{okButton:'我知道了'}).show();
+                    })
+                )
+            );
             $('<article class="gcs-video-list-item">').append(main,$('<div class="gcs-actions">').append(action('预览文件',()=>previewFile(video)).prop('disabled',video.storage==='gcs'&&!config.admin),...(queueVideo?[attach]:[]),menu)).appendTo(list);
 
         }
@@ -274,8 +322,8 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
                 sessionStorage.removeItem(storeKey);
                 pause.prop('disabled',true);
                 const completed=await pollImport(task.job.id,status);
-                if(completed?.status==='complete')status.text(completed.warning || (completed.video?.url?.startsWith('gs://')?'保存完成：copyparty 与 GCS 各一份。':'保存完成：文件位于 copyparty。'));
-            } else {sessionStorage.removeItem(storeKey);status.text('保存完成：文件位于 GCS。');}
+                if(completed?.status==='complete')status.text(completed.warning || (completed.video?.url?.startsWith('gs://')?'保存完成：节点与 GCS 云端各存一份（通常保留约 7 天）。':'保存完成：文件保存在节点存储（通常保留约 7 天）。'));
+            } else {sessionStorage.removeItem(storeKey);status.text('保存完成：文件保存在 GCS 云端（通常保留约 7 天）。');}
             await refresh();
         } catch (error) {
             status.text(controller.signal.aborted ? '已暂停。点击“上传 / 继续”恢复；刷新后需要重新选择相同文件。' : error.message);
@@ -304,7 +352,7 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
                 const job = await response.json();
                 const state = {queued:'排队中',downloading:'解析 / 下载中',ready:'等待上传',running:'上传 GCS 中',publishing:'保存临时直链中',complete:'完成',failed:'失败'}[job.status] || job.status;
                 taskStatus.text(`导入节点 ${job.worker_id}：${state} · ${(job.done / 1048576).toFixed(1)} / ${(job.total / 1048576).toFixed(1)} MiB`);
-                if (job.status === 'complete') { sessionStorage.removeItem(importKey); taskStatus.text(job.warning || (job.sync_video ? '导入完成，已同步到 copyparty。' : '导入完成，可以从下方列表附加。')); await refresh(); return job; }
+                if (job.status === 'complete') { sessionStorage.removeItem(importKey); taskStatus.text(job.warning || (job.sync_video ? '导入完成，已转存至节点并保留副本。' : '导入完成，可以从下方列表附加。')); await refresh(); return job; }
                 if (['failed','cancelled','expired'].includes(job.status)) { sessionStorage.removeItem(importKey); throw new Error(job.error || '云端导入失败，请检查链接后重试。'); }
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
@@ -342,8 +390,8 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
     const header=$('<header class="gcs-library-header">').append($('<div>').append($('<h3>').text('文件库'), $('<p class="gcs-muted">').text(queueVideo?'浏览文件，按需附加到本轮对话。':'统一管理文件与后台任务。')));
     if (onAttachLink || onConnect) {
         const actions=$('<div class="gcs-library-actions">');
-        if (onAttachLink) actions.append($('<button type="button" class="menu_button">').text('添加文件链接到本轮').on('click',onAttachLink));
-        if (onConnect) actions.append($('<button type="button" class="menu_button">').text('连接或更换账号').on('click',onConnect));
+        if (onAttachLink) actions.append($('<button type="button" class="menu_button">').text('通过链接直接附加').on('click',onAttachLink));
+        if (onConnect) actions.append($('<button type="button" class="menu_button">').text('切换 / 重新连接账号').on('click',onConnect));
         header.append(actions);
     }
     panel.append(header,tabs);
@@ -352,7 +400,7 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
         $('<footer class="gcs-list-footer">').append(more, $('<div class="gcs-pagination">').append(previous, pageLabel, next)));
     addTab('library', '我的文件', libraryPanel);
     addTab('upload', '上传文件', $('<section class="gcs-form-panel">').append(
-        $('<label class="gcs-field">').append($('<span>').text('选择本地文件'), fileInput),
+        $('<label class="gcs-field">').append($('<span>').text('选择本机文件'), fileInput),
         $('<label class="gcs-field">').append($('<span>').text('保存方式'),uploadMode),uploadPlan,durationField,
         $('<div class="gcs-actions">').append(upload, pause, fresh), progress, status,
         $('<p class="gcs-muted">').text('浏览器上传支持分片续传。关闭面板会暂停当前上传；节点接手后的保存和 GCS 上传会继续执行。')));
@@ -371,10 +419,50 @@ export async function showLibrary({API, context, Popup, POPUP_TYPE, POPUP_RESULT
         }).then(form => settingsPanel.empty().append(form)).catch(error => settingsPanel.text(error.message));
     }
     if (config.app_url && !config.management) panel.prepend($('<a target="_blank" rel="noopener noreferrer">').attr('href',config.app_url).text('打开独立文件库 · 配置与管理'));
-    const tasks=$('<section>'); addTab('tasks','任务',tasks);
-    async function loadTasks(){ const data=await api('/tasks');tasks.empty().append($('<button type="button" class="menu_button">').text('刷新任务').on('click',loadTasks));for(const task of data.items){const row=$('<p>').text(`${task.worker_id} · ${task.status} · ${task.error||task.video?.title||task.id}`);for(const op of (['failed','cancelled','expired'].includes(task.status)?['retry']:task.status==='complete'?[]:['cancel']))row.append($('<button type="button" class="menu_button">').text(op==='cancel'?'取消':'重试').on('click',async()=>{try{await api('/tasks/'+encodeURIComponent(task.id)+'/'+op,{});await loadTasks();}catch(e){toastr.error(e.message);}}));tasks.append(row);} }
-    tasks.append($('<button type="button" class="menu_button">').text('刷新任务').on('click',loadTasks));void loadTasks().catch(e=>tasks.text(e.message));
-    selectTab(config.configured ? 'library' : config.admin ? 'settings' : 'library');
+    const tasks=$('<section class="gcs-tasks-panel" style="display:flex;flex-direction:column;gap:12px;">'); addTab('tasks','任务',tasks);
+    const taskStatusMap = { queued:'排队中', downloading:'解析/下载中', ready:'等待上传', running:'上传中', publishing:'保存中', complete:'已完成', failed:'失败', cancelled:'已取消', expired:'已过期' };
+    async function loadTasks(){
+        const data=await api('/tasks');
+        tasks.empty();
+        const headerRow = $('<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">').append(
+            $('<span class="gcs-muted">').text(`共 ${data.items.length} 个后台任务`),
+            $('<button type="button" class="menu_button">').text('刷新任务').on('click',loadTasks)
+        );
+        tasks.append(headerRow);
+        if(!data.items.length){
+            tasks.append($('<p class="gcs-empty">').text('暂无后台任务。'));
+            return;
+        }
+        for(const task of data.items){
+            const statusLabel = taskStatusMap[task.status] || task.status;
+            const isFailed = ['failed','cancelled','expired'].includes(task.status);
+            const isDone = task.status === 'complete';
+            const statusClass = isDone ? 'gcs-storage-copyparty' : isFailed ? 'danger' : 'gcs-storage-gcs';
+            const row=$('<div class="gcs-video-list-item" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">');
+            const mainInfo=$('<div>').append(
+                $('<strong style="font-size:0.9rem;">').text(task.video?.title || task.id),
+                $('<div class="gcs-video-meta" style="margin-top:4px;">').append(
+                    $('<span class="gcs-storage-label">').text(task.worker_id),
+                    $(`<span class="gcs-storage-label ${statusClass}">`).text(statusLabel),
+                    task.error ? $('<span style="color:#dc2626;">').text(task.error) : $('')
+                )
+            );
+            const actions=$('<div class="gcs-actions">');
+            for(const op of (isFailed?['retry']:isDone?[]:['cancel'])){
+                const btn=$('<button type="button" class="menu_button">')
+                    .toggleClass('danger', op==='cancel')
+                    .toggleClass('gcs-primary', op==='retry')
+                    .text(op==='cancel'?'取消':'重试')
+                    .on('click',async()=>{try{await api('/tasks/'+encodeURIComponent(task.id)+'/'+op,{});await loadTasks();}catch(e){toastr.error(e.message);}});
+                actions.append(btn);
+            }
+            row.append(mainInfo, actions);
+            tasks.append(row);
+        }
+    }
+    void loadTasks().catch(e=>tasks.text(e.message));
+    const targetTab = new URLSearchParams(location.search).get('tab') || (config.configured ? 'library' : config.admin ? 'settings' : 'library');
+    selectTab(pages.has(targetTab) ? targetTab : (config.configured ? 'library' : config.admin ? 'settings' : 'library'));
     if (config.configured) loadSources().then(()=>refresh()).catch(error=>libraryStatus.text(error.message));
     else { upload.prop('disabled', true); count.text('请管理员先完成文件工具设置。'); }
     const importId = sessionStorage.getItem(importKey);

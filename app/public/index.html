@@ -1,1 +1,65 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>文件库</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="app.css"><body><header class="site-header"><a href="./">文件库</a><span>文件、任务与连接</span><nav id="account"></nav></header><main><section id="login"><h1>登录文件库</h1><p>使用独立账号管理文件与插件连接。</p><form><label>用户名<input name="handle" autocomplete="username" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><button>登录</button><p role="status"></p></form></section><div id="library"></div><section id="administration" hidden></section></main><div id="notice" role="status"></div><script src="jquery.js"></script><script type="module" src="app.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>文件库 · 统一媒体资产与云端连接</title>
+  <meta name="description" content="统一文件库管理平台：支持 GCS 云存储与 copyparty 节点文件库、分布式媒体节点导入及 Luker 插件授权连接。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-brand">
+      <a href="./" class="brand-link" aria-label="文件库首页">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path>
+          <path d="M12 11v6"></path>
+          <path d="m9 14 3-3 3 3"></path>
+        </svg>
+        <span class="brand-text">文件库</span>
+      </a>
+      <span class="site-subtitle">统一媒体资产与云端连接</span>
+    </div>
+    <nav id="account" aria-label="用户账户与设置"></nav>
+  </header>
+
+  <main>
+    <section id="login" aria-labelledby="login-heading">
+      <div class="login-card">
+        <div class="login-header">
+          <div class="login-avatar-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+              <circle cx="9" cy="9" r="2"></circle>
+              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+            </svg>
+          </div>
+          <h1 id="login-heading">登录文件库</h1>
+          <p>管理云端与本地文件库，签发 Luker 访问令牌</p>
+        </div>
+        <form>
+          <label>
+            <span>用户名 / 账号</span>
+            <input name="handle" autocomplete="username" placeholder="请输入用户名" required>
+          </label>
+          <label>
+            <span>登录密码</span>
+            <input name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+          </label>
+          <button type="submit" class="login-submit-btn">立即登录</button>
+          <p role="status" class="login-error-msg"></p>
+        </form>
+      </div>
+    </section>
+
+    <div id="library"></div>
+    <section id="administration" hidden></section>
+  </main>
+
+  <div id="notice" role="status" aria-live="polite"></div>
+
+  <script src="jquery.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

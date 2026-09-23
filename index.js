@@ -10,12 +10,16 @@ const durationLabel = value => value > 0 ? `${Math.round(value)} 秒` : '时长�
 
 async function connectLibrary() {
     const state=await (await fetch(API+'/connection',{headers:context().getRequestHeaders()})).json();
-    const token=$('<input type="password" class="text_pole" autocomplete="off" placeholder="粘贴专用插件令牌">');
-    const body=$('<div>').append($('<h3>').text('连接独立文件库'),$('<a target="_blank" rel="noopener noreferrer">').attr('href',state.app_url).text('打开独立应用，登录后生成专用令牌'),token);
-    if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'连接',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return false;
+    const token=$('<input type="password" class="text_pole" autocomplete="off" placeholder="在此粘贴在文件库生成的访问令牌">');
+    const body=$('<div>').append(
+        $('<h3>').text('连接文件库服务'),
+        $('<p class="gcs-muted" style="margin:6px 0 12px;">').append('请先前往 ', $('<a target="_blank" rel="noopener noreferrer" style="color:#059669;font-weight:600;">').attr('href',state.app_url).text('独立文件库管理页面'), '，登录管理员或个人账号并签发专属访问令牌。'),
+        $('<label>').text('插件访问令牌').append(token)
+    );
+    if(await new Popup(body,POPUP_TYPE.CONFIRM,'',{okButton:'确认连接',cancelButton:'取消'}).show()!==POPUP_RESULT.AFFIRMATIVE)return false;
     const response=await fetch(API+'/connection',{method:'POST',headers:context().getRequestHeaders(),body:JSON.stringify({token:token.val()})});
     token.val('');const data=await response.json();if(!response.ok)throw Error(data.error || '连接失败。');
-    toastr.success('已连接独立文件库。');return true;
+    toastr.success('已成功连接独立文件库。');return true;
 }
 async function showVideoManager() {
     const response=await fetch(API+'/config',{headers:context().getRequestHeaders()});
@@ -27,12 +31,14 @@ async function showVideoManager() {
     return showLibrary({API,context,Popup,POPUP_TYPE,POPUP_RESULT,queueVideo,getPending:()=>pending,onAttachLink:()=>showAttachDialog().catch(error=>toastr.error(error.message)),onConnect:()=>connectLibrary().catch(error=>toastr.error(error.message))});
 }
 
+const paperclipSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px;flex-shrink:0;"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.96 8.8l-8.58 8.57a2 2 0 0 1-2.83-2.83l7.87-7.87"/></svg>';
+
 function renderPending() {
     $('#gcs-video-pending').remove();
     if (!pending) return;
     $('<div id="gcs-video-pending" class="gcs-video-badge">').append(
-        $('<span>').text(`${pending.title} · ${['video','audio'].includes(pending.type)?durationLabel(pending.duration_seconds):pending.type.toUpperCase()} · 仅本轮`),
-        $('<button type="button" class="menu_button">').text('取消附件').on('click', () => { pending = null; renderPending(); }),
+        $('<span>').append($(paperclipSvg), `${pending.title} · ${['video','audio'].includes(pending.type)?durationLabel(pending.duration_seconds):pending.type.toUpperCase()} · 仅本轮有效`),
+        $('<button type="button" class="menu_button danger">').text('移除附件').on('click', () => { pending = null; renderPending(); }),
     ).insertBefore('#nonQRFormItems');
 }
 
@@ -81,17 +87,17 @@ async function showAttachDialog() {
         } catch (error) { if (!signal.aborted) hint.text(error.message + ' 时长可留空。'); }
     }
     uri.on('input', () => { duration.val(''); lookup?.abort(); clearTimeout(timer); timer = setTimeout(detectDuration, 500); });
-    const detect = $('<button type="button" class="menu_button">').text('重新读取时长').on('click', detectDuration);
+    const detect = $('<button type="button" class="menu_button">').text('自动获取媒体时长').on('click', detectDuration);
     const form = $('<div class="gcs-video-dialog">').append(
-        $('<h3>').text('添加文件链接'),
-        $('<p>').text('附加到本轮后，使用支持相应文件类型的 Gemini 连接发送。连接与可用模型可在文件库设置中调整。'),
-        $('<label>').text('GCS 地址或 HTTPS 文件直链').append(uri),
-        $('<label>').text('视频时长（秒，可选）').append(duration), detect, hint,
-        $('<p>').text('下一轮不会自动重发文件，需要时可再次附加。'),
+        $('<h3>').text('通过链接直接附加文件'),
+        $('<p class="gcs-muted">').text('将外部媒体直链或云端 GCS 存储地址直接作为附件引入当前轮次对话。'),
+        $('<label>').text('媒体文件链接 (gs:// 或 HTTPS 直链)').append(uri),
+        $('<label>').text('媒体时长（秒，可选）').append(duration), detect, hint,
+        $('<p class="gcs-muted" style="margin-top:8px;">').text('提示：此附件仅在当前轮次会话中生效，下一轮对话不会自动延续。'),
     );
     if (uri.val() && !duration.val()) detectDuration();
     try {
-        while (await new Popup(form, POPUP_TYPE.CONFIRM, '', { okButton: '附加', cancelButton: '取消' }).show() === POPUP_RESULT.AFFIRMATIVE) {
+        while (await new Popup(form, POPUP_TYPE.CONFIRM, '', { okButton: '确认附加到本轮', cancelButton: '取消' }).show() === POPUP_RESULT.AFFIRMATIVE) {
             try { queueVideo(uri.val(), duration.val(), undefined); return; }
             catch (error) { toastr.error(error.message); }
         }
@@ -105,8 +111,8 @@ function renderMessage(index) {
     message.find('.gcs-video-message').remove();
     if (!video) return;
     $('<div class="gcs-video-message gcs-video-badge">').append(
-        $('<span>').text(`${video.title} · ${['video','audio'].includes(video.type)?durationLabel(video.duration_seconds):video.type.toUpperCase()} · 文件仅本轮`),
-        $('<button type="button" class="menu_button">').text('再次附加').on('click', () => {
+        $('<span>').append($(paperclipSvg), `${video.title} · ${['video','audio'].includes(video.type)?durationLabel(video.duration_seconds):video.type.toUpperCase()} · 文件仅本轮`),
+        $('<button type="button" class="menu_button gcs-primary">').text('再次附加').on('click', () => {
             try { queueVideo(video.url, video.duration_seconds, video.title); }
             catch (error) { toastr.error(error.message); }
         }),

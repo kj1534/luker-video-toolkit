@@ -47,14 +47,14 @@ export async function createSettingsPanel(context, onSaved, API = '/library/api'
         row.id.input.attr('placeholder', 'primary');
         row.library = $('<input type="checkbox">').prop('checked', Boolean(value.library_enabled)).on('change',updateDefaults);
         const libraryLabel = $('<label class="gcs-checkbox">').append(row.library, ' 在文件库显示该节点的共享目录（仅管理员）');
-        const remove = $('<button type="button" class="menu_button gcs-subtle">').text('移除节点').on('click', () => { nodeRows.splice(nodeRows.indexOf(row), 1); row.element.remove(); updateDefaults(); });
+        const remove = $('<button type="button" class="menu_button danger" style="align-self:flex-end;">').text('移除此节点').on('click', () => { nodeRows.splice(nodeRows.indexOf(row), 1); row.element.remove(); updateDefaults(); });
         row.element = $('<div class="gcs-node-row">').append(row.id.label, row.label.label, row.url.label, row.token.label, libraryLabel, remove);
         row.id.input.add(row.label.input).on('input', updateDefaults);
         nodeRows.push(row); nodes.append(row.element); updateDefaults();
     }
     for (const node of current.import_workers) addNode(node);
     updateDefaults();
-    const add = $('<button type="button" class="menu_button">').text('＋ 添加节点').on('click', () => addNode());
+    const add = $('<button type="button" class="menu_button" style="margin-bottom:12px;">').text('＋ 添加新节点').on('click', () => addNode());
     const save = $('<button type="submit" class="menu_button gcs-primary">').text('保存设置');
     const test = $('<button type="button" class="menu_button">').text('检测已保存的连接');
     const testResult = $('<div class="gcs-check-results" role="status">');
@@ -66,11 +66,15 @@ export async function createSettingsPanel(context, onSaved, API = '/library/api'
         $('<label class="gcs-field">').append($('<span>').text('服务账号密钥'), credential, credentialState),
         $('<div class="gcs-field-grid">').append(maxSize.label, directSize.label),
         $('<label class="gcs-field">').append($('<span>').text('允许附加的 HTTPS 视频来源（每行一个域名地址）'), origins),
-        $('<h4>').text('导入节点'), $('<p class="gcs-muted">').text('添加已部署节点的接口和令牌；不添加节点也可上传本地视频。'),
-        nodes, add, $('<label class="gcs-field">').append($('<span>').text('默认节点'), defaultSelect),
-        $('<label class="gcs-field">').append($('<span>').text('GCS 下载与复制节点（需配置 Google 私有 API 地址）'),readSelect),
-        $('<label class="gcs-field">').append($('<span>').text('默认 copyparty 目标节点'),copySelect), copyVolume.label,
-        $('<div class="gcs-actions">').append(save, test), testResult,
+        $('<h4>').text('导入与存储节点'), $('<p class="gcs-muted">').text('添加已部署节点的接口和令牌；不添加节点也可上传本地视频。'),
+        nodes, add,
+        $('<div class="gcs-field-grid">').append(
+            $('<label class="gcs-field">').append($('<span>').text('默认导入节点'), defaultSelect),
+            $('<label class="gcs-field">').append($('<span>').text('GCS 下载与复制节点'), readSelect),
+            $('<label class="gcs-field">').append($('<span>').text('默认 copyparty 目标节点'), copySelect),
+            copyVolume.label
+        ),
+        $('<div class="gcs-actions" style="margin-top:10px;">').append(save, test), testResult,
     );
     root.append(fields, status);
     root.on('submit', async event => {

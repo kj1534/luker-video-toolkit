@@ -1,3 +1,9 @@
+# 1.0.4
+
+Refreshes the independent library and Luker connector with a shared visual design, clearer file and retention descriptions, and responsive layouts. File operations, authorization, upload sessions, task polling, and turn-scoped attachments keep their existing behavior. The standalone worker package is version-aligned; worker logic is unchanged.
+
+Validation: frontend syntax checks, previously completed focused UI screenshots and existing test suite (24 passed, one environment-dependent skip), package checksums, and production version/connection checks. Actual 390px mobile-device rendering remains for a later device check.
+
 # 1.0.1
 
 The Luker connector now preserves the independent service's HTTP status when an error response is plain text. A denied administrator request or revoked token reports its original 403/401 status instead of an unrelated 502 parsing error. Authorization boundaries are unchanged.
