@@ -20,7 +20,7 @@ export async function init(router){
         if(!token)throw Object.assign(Error('请先连接独立文件库。'),{status:401});
         const url=new URL(c.service_url);if(url.protocol!=='https:')throw Error('Invalid service URL');
         const response=await fetchImpl(c.service_url.replace(/\/$/,'')+'/api'+route,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',...(req.headers.origin?{'X-Client-Origin':req.headers.origin}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(60000)});
-        const data=await response.json();if(!response.ok)throw Object.assign(Error(data.error||'独立文件库暂不可用。'),{status:response.status});return data;
+        const data=await response.json().catch(()=>({}));if(!response.ok)throw Object.assign(Error(data.error||'独立文件库暂不可用。'),{status:response.status});return data;
     }
     router.use((req,res,next)=>handle(req)?next():res.sendStatus(401));
     router.get('/connection',(req,res)=>res.json({app_url:read().service_url,connected:Boolean(read().users[handle(req)]?.token)}));

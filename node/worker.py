@@ -204,7 +204,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/library/roots':
             return self.reply(200, {'volumes':library.roots(CONFIG)})
         if self.path == '/healthz':
-            return self.reply(200, {'ok': True,'version':'1.0.0','active':sum(j['status'] not in ('complete','failed','cancelled','expired') for j in JOBS.values()),'capabilities':control.visible(CONFIG)})
+            return self.reply(200, {'ok': True,'version':'1.0.1','active':sum(j['status'] not in ('complete','failed','cancelled','expired') for j in JOBS.values()),'capabilities':control.visible(CONFIG)})
         if self.path=='/settings':return self.reply(200,control.visible(CONFIG))
         if self.path.startswith('/egress/'):
             try:return self.reply(200,control.selector(CONFIG,self.path.split('/')[-1]))

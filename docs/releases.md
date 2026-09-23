@@ -1,3 +1,9 @@
+# 1.0.1
+
+The Luker connector now preserves the independent service's HTTP status when an error response is plain text. A denied administrator request or revoked token reports its original 403/401 status instead of an unrelated 502 parsing error. Authorization boundaries are unchanged.
+
+Validated against the deployed connector; native mixed attachments, regeneration and streaming conversion passed all seven checks in the unmodified Luker runtime.
+
 # 1.0.0
 
 The file library now runs as an independent application with its own login, user-scoped revocable tokens, durable jobs and shared configuration. The Luker connector retains uploads, imports, file selection and turn-scoped native Gemini attachments; administration moves to the independent application. Existing object prefixes, URIs, catalogs and copy indexes migrate without reuploading file data.
