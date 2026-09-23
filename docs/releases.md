@@ -23,5 +23,3 @@ Validation: owner-grant authorization and pagination checks, file-library/settin
 # 1.0.3
 
 The independent app now places the current user's login-password control in User management, while token issuance and revocation remain in Plugin tokens. User management is available to every signed-in user for their own password; only administrators see other users and account creation. The Luker connection and service API are unchanged.
-
-Added a frontend polish handoff for a design-only iteration across the independent app and shared Luker file-library UI. It identifies shared components and the behavior that must remain intact.
