@@ -20,6 +20,10 @@ import local_upload
 from source_fetch import open_source, validate_https, start_proxy
 import web_import
 
+release_root = pathlib.Path(__file__).resolve().parent
+if release_root.name == 'node':
+    release_root = release_root.parent
+RELEASE_VERSION = (release_root / 'VERSION').read_text().strip()
 CONFIG = {}
 JOBS = {}
 LOCK = threading.Lock()
@@ -204,7 +208,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == '/library/roots':
             return self.reply(200, {'volumes':library.roots(CONFIG)})
         if self.path == '/healthz':
-            return self.reply(200, {'ok': True,'version':'1.0.1','active':sum(j['status'] not in ('complete','failed','cancelled','expired') for j in JOBS.values()),'capabilities':control.visible(CONFIG)})
+            return self.reply(200, {'ok': True,'version':RELEASE_VERSION,'active':sum(j['status'] not in ('complete','failed','cancelled','expired') for j in JOBS.values()),'capabilities':control.visible(CONFIG)})
         if self.path=='/settings':return self.reply(200,control.visible(CONFIG))
         if self.path.startswith('/egress/'):
             try:return self.reply(200,control.selector(CONFIG,self.path.split('/')[-1]))

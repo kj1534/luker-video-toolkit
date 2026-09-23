@@ -1,3 +1,7 @@
+# 1.0.5
+
+Final deployment release for the frontend refresh. Worker health now reports the installed package version from its `VERSION` file, and the node installer preserves that file. v1.0.4 was published but not deployed; v1.0.5 is the version to install across the independent app, Luker connector, and both workers.
+
 # 1.0.4
 
 Refreshes the independent library and Luker connector with a shared visual design, clearer file and retention descriptions, and responsive layouts. File operations, authorization, upload sessions, task polling, and turn-scoped attachments keep their existing behavior. The standalone worker package is version-aligned; worker logic is unchanged.
