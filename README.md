@@ -24,6 +24,6 @@ Independent file management and background transfers, with a small Luker connect
 
 The Luker integration requires both official frontend-extension and server-plugin installation from this same repository. The server component holds only user plugin connections and the Gemini loopback adapter, not the GCS key or node credentials. Other hosts can use the same scoped HTTP API without importing Luker internals.
 
-See [installation and migration](docs/installation.md), [file behavior](docs/file-library.md), and [API and operations](docs/independent-app.md). Deployments and real proxy topology are private and are not distributed here.
+See [installation and migration](docs/installation.md), [file behavior](docs/file-library.md), [API and operations](docs/independent-app.md), and the [frontend polish handoff](docs/frontend-polish-handoff.md). Deployments and real proxy topology are private and are not distributed here.
 
 License: AGPL-3.0-only.
